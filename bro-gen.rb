@@ -39,12 +39,12 @@ class String
     def underscore!
         replace(scan(/[A-Z][a-z]*/).join('_').downcase)
     end
-    
+
     def upcase_first
         self[0] = self[0].upcase
         self
     end
-    
+
     def downcase_first
         self[0] = self[0].downcase
         self
@@ -383,7 +383,7 @@ module Bro
            source == '__WATCHOS_PROHIBITED' || source == '__TVOS_PROHIBITED' || source.start_with?('NS_SWIFT_UNAVAILABLE') || (source.start_with?('API_UNAVAILABLE') && !source.include?('ios')) ||
            source == 'UI_APPEARANCE_SELECTOR' || source == 'CF_RETURNS_NOT_RETAINED' || source == 'NS_REQUIRES_SUPER'
             return IgnoredAttribute.new source
-        elsif source == 'NS_UNAVAILABLE' || source == '__unavailable' || source.start_with?('OBJC_UNAVAILABLE') || source.start_with?('OBJC_SWIFT_UNAVAILABLE') || 
+        elsif source == 'NS_UNAVAILABLE' || source == '__unavailable' || source.start_with?('OBJC_UNAVAILABLE') || source.start_with?('OBJC_SWIFT_UNAVAILABLE') ||
               source == 'UNAVAILABLE_ATTRIBUTE' || source == '__IOS_PROHIBITED' || source.match(/API_UNAVAILABLE\(.*ios/) || # TODO should differ between platforms?
               source =~ /deprecated\(".*"\)/ || source == 'deprecated' || source == 'unavailable'
             return UnavailableAttribute.new source
@@ -575,11 +575,11 @@ module Bro
     class ObjCClassMethod < ObjCMethod
         def initialize(model, cursor, owner)
             super(model, cursor, owner)
-            
+
             s = Bro.read_source_range(cursor.extent)
             @class_property = !s.include?('+') # class properties are also recognized as class methods
         end
-        
+
         def is_class_property?
             @class_property
         end
@@ -626,7 +626,7 @@ module Bro
             base = @name[0, 1].upcase + @name[1..-1]
             @attrs['setter'] || "set#{base}:"
         end
-        
+
         def is_static?
             @attrs['class']
         end
@@ -675,9 +675,9 @@ module Bro
             @class_vars = []
             @opaque = false
             @def_constructor = true
-            
+
             generic_fix = false
-            
+
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
                 when :cursor_unexposed_expr, :cursor_struct, :cursor_template_type_parameter, :cursor_type_ref, 417
@@ -723,7 +723,7 @@ module Bro
         def is_opaque?
             @opaque
         end
-        
+
         def has_def_constructor?
             @def_constructor
         end
@@ -1599,9 +1599,9 @@ module Bro
             name = type.spelling
             name = name.gsub(/\s*\bconst\b\s*/, '')
             name = name.sub(/^(struct|union|enum)\s*/, '')
-            
+
             gen_name = name !~ /^(id|NSObject)<.*>$/ ? name.gsub(/<.*>/, '').sub(/ *_(nonnull|nullable|null_unspecified) /i, '') : name
-            
+
             if type.kind != :type_obj_c_object_pointer && @conf_typedefs[gen_name] # Try to lookup typedefs without generics
                 resolve_type_by_name gen_name
             elsif @conf_typedefs[name]
@@ -1649,14 +1649,14 @@ module Bro
                 elsif name =~ /(.*?)<(.*)>/ # Generic type
                     type_name = $1
                     generic_name = $2.tr('* ', '').sub(/__kindof/, '').sub(/id<(.*)>/, '\1')
-                    
+
                     resolve_generic = ['NSString', 'NSCopying', 'NSObject', 'KeyType', 'ObjectType', 'Class', ',', '<', '>'].all? { |n| !generic_name.include? n }
-                    
+
                     e = resolve_type_by_name(type_name)
                     generic_type = resolve_type_by_name(generic_name) if resolve_generic
-                    
+
                     resolve_generic &= generic_type.is_a?(ObjCClass) || generic_type.is_a?(Typedef) || generic_type.is_a?(Builtin) # TODO support categories
-                    
+
                     if resolve_generic && generic_type && e && e.pointer
                         [e, generic_type]
                     else
@@ -1858,7 +1858,7 @@ module Bro
         def getter_for_name(name, type, omit_prefix)
             base = omit_prefix ? name[0..-1] : name[0, 1].upcase + name[1..-1]
             getter = name
-            
+
             unless omit_prefix
                 if type == 'boolean'
                     case name.to_s
@@ -2083,7 +2083,7 @@ $LICENSE_HEADER
 
 def get_license_header()
     f = File.join(File.dirname(__FILE__), 'LICENSE.txt')
-    
+
     if ($LICENSE_HEADER.nil?)
         $LICENSE_HEADER = "/*\n"
         IO.foreach(f) do |line|
@@ -2217,7 +2217,7 @@ def property_to_java(model, owner, prop, props_conf, seen, adapter = false)
 
     if !conf['exclude']
         name = conf['name'] || prop.name
-        
+
         return [] if adapter && conf['skip_adapter']
 
         type = get_generic_type(model, owner, prop, prop.type, 0, conf['type'])
@@ -2318,7 +2318,7 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
     conf = model.get_conf_for_key(full_name, methods_conf) || {}
 
     return [[], []] if adapter && conf['skip_adapter']
-    
+
     return [[], []] if method.is_a?(Bro::ObjCClassMethod) && method.is_class_property?
 
     if seen[full_name]
@@ -2364,7 +2364,7 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
 
         generics_s = ([ret_type] + param_types).map { |e| e[1] }.find_all { |e| e }.join(', ')
         generics_s = !generics_s.empty? ? "<#{generics_s}>" : ''
-        
+
         if owner.is_a?(Bro::ObjCCategory)
             if method.is_a?(Bro::ObjCInstanceMethod)
                 cconf = model.get_category_conf(owner.owner)
@@ -2429,8 +2429,8 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
 
             visibility = 'private'
         end
-        
-        if (is_static && static_constructor) 
+
+        if (is_static && static_constructor)
             ret_type[0] = "@Pointer long"
             visibility = 'protected'
         end
@@ -2456,7 +2456,7 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
 
             model.push_availability(method, constructor_lines)
             constructor_lines << annotations.to_s if annotations
-            
+
             if (is_init?(owner, method))
                 if conf['throws']
                     constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{new_parameters_s}) throws #{conf['throws']} {"
@@ -2472,7 +2472,7 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
             elsif (static_constructor)
                 if conf['throws']
                     args_s2 = param_types[0..-2].map { |p| p[2] }.join(', ')
-                
+
                     constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{new_parameters_s}) throws #{conf['throws']} {"
                     constructor_lines << "   this(#{args_s2}, new #{error_type}.#{error_type}Ptr());"
                     constructor_lines << "}"
@@ -2516,7 +2516,7 @@ global = YAML.load_file("#{script_dir}/global.yaml")
 ARGV[1..-1].each do |yaml_file|
     puts "Processing #{yaml_file}..."
     conf = YAML.load_file(yaml_file)
-    
+
     framework = conf['framework']
 
     headers = []
@@ -2526,9 +2526,9 @@ ARGV[1..-1].each do |yaml_file|
 
     conf = global.merge conf
     conf['typedefs'] = (global['typedefs'] || {}).merge(conf['typedefs'] || {}).merge(conf['private_typedefs'] || {})
-    
+
     framework_roots = []
-    
+
     if conf['header_root']
         framework_roots[0] = File.expand_path(File.dirname(yaml_file)) + conf['header_root']
         header_root = framework_roots[0]
@@ -2562,7 +2562,7 @@ ARGV[1..-1].each do |yaml_file|
 
     (conf['include'] || []).each do |f|
         custom_framework = f.include?('.yaml')
-    
+
         if (!f.include?('.'))
             ['robovm', 'mobi-robovm', 'mobirobovm'].each do |robovm_folder|
                 file_name = "#{script_dir}/../#{robovm_folder}/compiler/cocoatouch/src/main/bro-gen/#{f}.yaml"
@@ -2574,7 +2574,7 @@ ARGV[1..-1].each do |yaml_file|
         else
             f = Pathname.new(yaml_file).parent + f
         end
-        
+
         c = YAML.load_file(f)
         # Excluded all classes in included config
         c_classes = (c['classes'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
@@ -2586,7 +2586,7 @@ ARGV[1..-1].each do |yaml_file|
         conf['typedefs'] = (c['typedefs'] || {}).merge(conf['typedefs'] || {})
         conf['annotations'] = (c['annotations'] || []).concat(conf['annotations'] || [])
         imports.push("#{c['package']}.*") if c['package']
-        
+
         if custom_framework
             framework_roots << File.expand_path(File.dirname(yaml_file), File.dirname(f))
         end
@@ -2603,16 +2603,16 @@ ARGV[1..-1].each do |yaml_file|
 
     index = FFI::Clang::Index.new
     clang_args = ['-arch', 'arm64', '-mthumb', '-miphoneos-version-min', $ios_version, '-fblocks', '-isysroot', sysroot]
-    
+
     headers[1..-1].each do |e|
         clang_args.push('-include')
         clang_args.push(File.join(header_root, e))
     end
-    
+
     framework_roots.each do |e|
         clang_args << "-F#{e}" if e != sysroot
     end
-    
+
     clang_args += conf['clang_args'] if conf['clang_args']
     translation_unit = index.parse_translation_unit(File.join(header_root, headers[0]), clang_args, [], detailed_preprocessing_record: true)
 
