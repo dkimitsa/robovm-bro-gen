@@ -345,6 +345,11 @@ module Bro
             elsif source =~ /_AVAILABLE_STARTING\s*\(/
                 @mac_version = args[0]
                 @ios_version = args[1]
+            elsif source =~ /_AVAILABLE_IOS_STARTING\s*\(/
+                # E.g. CA_AVAILABLE_IOS_STARTING
+                @ios_version = args[0]
+                # @tvos_version = args[1]
+                # @watchos_version = args[2]
             elsif source =~ /_AVAILABLE_BUT_DEPRECATED\s*\(/
                 @mac_version = args[0]
                 @mac_dep_version = args[1]
@@ -2458,6 +2463,7 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
             constructor_lines << annotations.to_s if annotations
 
             if (is_init?(owner, method))
+                constructor_lines << "@Method(selector = \"#{method.name}\")"
                 if conf['throws']
                     constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{new_parameters_s}) throws #{conf['throws']} {"
                     constructor_lines << "   super((SkipInit) null);"
