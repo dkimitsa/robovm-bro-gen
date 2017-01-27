@@ -2003,7 +2003,7 @@ module Bro
                                 # will cause side efects
                                 value = eval(value)
                                 @constant_values.push ConstantValue.new self, cursor, value.to_s
-                            rescue => e
+                            rescue Exception => e
                                 # check if is a reference to a constant
                                 value = @constant_values.find { |e| e.name == value }
                                 if value
@@ -2685,20 +2685,6 @@ ARGV[1..-1].each do |yaml_file|
     potential_constant_enums = []
     model.enums.each do |enum|
         c = model.get_enum_conf(enum.name)
-
-        if c && !c['exclude'] && enum.is_outdated?
-            $stderr.puts "WARN ENUM DEPR: #{enum.deprecated}  #{enum.deprecated[0..2]}"
-        end
-
-        # def is_outdated?
-        #     if deprecated
-        #         d_version = deprecated[0..2].to_f
-        #         d_version <= @@deprecated_version
-        #     else
-        #         false
-        #     end
-        # end
-
         if c && !c['exclude'] && !enum.is_outdated?
             data = {}
             java_name = enum.java_name
