@@ -356,10 +356,28 @@ module Bro
                 @ios_version = args[2]
                 @ios_dep_version = args[3]
             elsif source =~ /_DEPRECATED\s*\(/
-                @mac_version = args[0]
-                @mac_dep_version = args[1]
-                @ios_version = args[2]
-                @ios_dep_version = args[3]
+                if s =~ /ios\((.*),([^\(]*)\)/ || s =~ /macosx\((.*),([^\(]*)\)/
+                    # in availability.h it looks now as bellow
+                    # API_DEPRECATED("No longer supported", macos(10.4, 10.8), ios(2.0, 3.0), watchos(2.0, 3.0), tvos(9.0, 10.0))
+                    # so parse different way
+                    # keep these in separatea args2 split that ignores contents of parentheses (just not to break other cases)
+                    args2 = s.scan(/(?:\(.*?\)|[^,])+/)
+                    args2 = args2.collect{|x| x.strip || x}
+                    args2.each do |v|
+                        if v =~ /ios\((.*),([^\(]*)\)/
+                            @ios_version = $1.strip
+                            @ios_dep_version = $2.strip
+                        elsif v =~ /macosx\((.*),([^\(]*)\)/
+                            @mac_version = $1.strip
+                            @mac_dep_version = $2.strip
+                        end
+                    end
+                else
+                    @mac_version = args[0]
+                    @mac_dep_version = args[1]
+                    @ios_version = args[2]
+                    @ios_dep_version = args[3]
+                end
             end
             @mac_version = @mac_version == '' ? nil : @mac_version
             @mac_dep_version = @mac_version == '' ? nil : @mac_dep_version
@@ -1725,8 +1743,12 @@ module Bro
                 else
                     td = @typedefs.find { |e| e.name == name }
                     if !td
-                        # Check builtins for builtin typedefs like va_list
-                        Bro.builtins_by_name(name)
+                        if type.declaration.kind == :cursor_template_type_parameter
+                            resolve_type(type.canonical)
+                        else
+                            # Check builtins for builtin typedefs like va_list
+                            Bro.builtins_by_name(name)
+                        end
                     else
                         if td.is_callback? || td.is_struct? || td.is_enum?
                             td
@@ -2197,6 +2219,7 @@ def is_method_like_init?(owner, method)
     method.is_a?(Bro::ObjCInstanceMethod) && method.name.start_with?('init') &&
         (method.return_type.spelling == 'id' ||
          method.return_type.spelling =~ /instancetype/ ||
+         method.return_type.spelling =~ /kindof\s+#{Regexp.escape(owner.name)}\s*\*/ ||
          method.return_type.spelling == "#{owner.name} *")
 end
 
@@ -2633,6 +2656,20 @@ ARGV[1..-1].each do |yaml_file|
     potential_constant_enums = []
     model.enums.each do |enum|
         c = model.get_enum_conf(enum.name)
+
+        if c && !c['exclude'] && enum.is_outdated?
+            $stderr.puts "WARN ENUM DEPR: #{enum.deprecated}  #{enum.deprecated[0..2]}"
+        end
+
+        # def is_outdated?
+        #     if deprecated
+        #         d_version = deprecated[0..2].to_f
+        #         d_version <= @@deprecated_version
+        #     else
+        #         false
+        #     end
+        # end
+
         if c && !c['exclude'] && !enum.is_outdated?
             data = {}
             java_name = enum.java_name
