@@ -327,6 +327,10 @@ module Bro
                 @ios_version = args[0]
             elsif source =~ /_AVAILABLE_MAC\s*\(/
                 @mac_version = args[0]
+            elsif source =~ /_WATCHOS_AVAILABLE\s*\(/
+                # skip as it breaks ios version
+            elsif source =~ /_TVOS_AVAILABLE\s*\(/
+                # skip as it breaks ios version
             elsif source =~ /_AVAILABLE\s*\(/
                 if args.length == 1
                     # E.g. MP_EXTERN_CLASS_AVAILABLE(version) = NS_CLASS_AVAILABLE(NA, version).
