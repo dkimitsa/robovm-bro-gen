@@ -1989,7 +1989,36 @@ module Bro
                     @functions.push Function.new self, cursor
                     next :continue
                 when :cursor_variable
-                    @global_values.push GlobalValue.new self, cursor
+                    # check if variable definition starts with static in this case it can't be
+                    # global value and should be converted to constant if possible
+                    src = Bro.read_source_range(cursor.extent)
+                    if src == '?' || !src.strip.start_with?("static")
+                        @global_values.push GlobalValue.new self, cursor
+                    else
+                        # static variable, get value
+                        if src =~ /=(.*?)$/
+                            value = $1.strip
+                            begin
+                                # FIXME: there is a chance that value under eval will match ruby api module var which
+                                # will cause side efects
+                                value = eval(value)
+                                @constant_values.push ConstantValue.new self, cursor, value.to_s
+                            rescue => e
+                                # check if is a reference to a constant
+                                value = @constant_values.find { |e| e.name == value }
+                                if value
+                                    @constant_values.push ConstantValue.new self, cursor, value.value, value.type
+                                end
+                            end
+                            if value
+                                $stderr.puts "WARN: Turning the gloval value #{cursor.spelling} into constants"
+                            else
+                                $stderr.puts "WARN: Failed to turning the gloval value #{cursor.spelling} into constants (eval failed)"
+                            end
+                        else
+                            $stderr.puts "WARN: Ignoring static gloval value #{cursor.spelling} without value at #{Bro.location_to_s(cursor.location)}"
+                        end
+                    end
                     next :continue
                 when :cursor_obj_c_interface_decl
                     @objc_classes.push ObjCClass.new self, cursor
