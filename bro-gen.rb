@@ -120,7 +120,7 @@ module Bro
 
         def is_outdated?
             if deprecated
-                d_version = deprecated[0..2].to_f
+                d_version = deprecated
                 d_version <= @@deprecated_version
             else
                 false
@@ -346,6 +346,9 @@ module Bro
             elsif source =~ /_DEPRECATED_IOS\s*\(/
                 @ios_version = args[0]
                 @ios_dep_version = args[1]
+            elsif source =~ /_IOS_DEPRECATED\s*\(/
+                @ios_version = args[0]
+                @ios_dep_version = args[1]
             elsif source =~ /_AVAILABLE_STARTING\s*\(/
                 @mac_version = args[0]
                 @ios_version = args[1]
@@ -359,13 +362,18 @@ module Bro
                 @mac_dep_version = args[1]
                 @ios_version = args[2]
                 @ios_dep_version = args[3]
+            elsif source =~ /_AVAILABLE_BUT_DEPRECATED_MSG\s*\(/
+                @mac_version = args[0]
+                @mac_dep_version = args[1]
+                @ios_version = args[2]
+                @ios_dep_version = args[3]
             elsif source =~ /_DEPRECATED\s*\(/
                 if s =~ /ios\((.*),([^\(]*)\)/ || s =~ /macosx\((.*),([^\(]*)\)/
                     # in availability.h it looks now as bellow
                     # API_DEPRECATED("No longer supported", macos(10.4, 10.8), ios(2.0, 3.0), watchos(2.0, 3.0), tvos(9.0, 10.0))
                     # so parse different way
                     # keep these in separatea args2 split that ignores contents of parentheses (just not to break other cases)
-                    args2 = s.scan(/(?:\(.*?\)|[^,])+/)
+                    args2 = s.scan(/(?:"(?:""|.)*?"(?!")|[^,]*?\(.*?\)|[^,]+)/)
                     args2 = args2.collect{|x| x.strip || x}
                     args2.each do |v|
                         if v =~ /ios\((.*),([^\(]*)\)/
@@ -383,10 +391,23 @@ module Bro
                     @ios_dep_version = args[3]
                 end
             end
-            @mac_version = @mac_version == '' ? nil : @mac_version
-            @mac_dep_version = @mac_version == '' ? nil : @mac_dep_version
-            @ios_version = @ios_version == '' ? nil : @ios_version
-            @ios_dep_version = @ios_version == '' ? nil : @ios_dep_version
+            @mac_version = str_to_float(@mac_version)
+            @mac_dep_version = str_to_float(@mac_dep_version)
+            @ios_version = str_to_float(@ios_version)
+            @ios_dep_version = str_to_float(@ios_dep_version)
+        end
+
+        def str_to_float(s)
+            begin
+                return Float(s).to_f
+            rescue
+                return nil
+            end
+        end
+
+        def empty?
+            res = !@ios_version && !ios_dep_version
+            return res
         end
     end
     class UnavailableAttribute < Attribute
@@ -419,6 +440,43 @@ module Bro
             return AvailableAttribute.new source
         else
             return UnsupportedAttribute.new source
+        end
+    end
+
+    class Macro
+        attr_accessor :name, :source, :args, :body
+        def initialize(source)
+            source = source.split(/\s*\\*\s*\n/).join(" ")
+            @source = source
+            # name
+            @name = source[/^[A-Za-z_][A-Za-z_0-9]*/]
+            # remove name
+            s = source.gsub(/^[A-Za-z_][A-Za-z_0-9]*/, '').strip
+            # check if has params
+            if s.start_with?("(")
+                params = s[/^\(.*?\)/][1..-2]
+                args = params.scan(/(?:"(?:""|.)*?"(?!")|[^,]*?\(.*?\)|[^,]+)/)
+                @args = args.collect{|x| x.strip || x}
+                @body = s.sub(/^\(.*?\)\s*/, '')
+            else
+                @args = []
+                @body = s
+            end
+            # puts "@Macro: #{@name}:  #{@source} #{@args} #{@body}"
+            # puts "@Macro: #{@name} && #{@body} ::: #{@source}"
+        end
+
+        def subst(params)
+            return body unless @args.length
+            params = [] unless params
+            if params.length != @args.length
+                return nil
+            end
+            res = @body
+            for idx in 0..@args.length - 1
+                res = res.sub(@args[idx], params[idx])
+            end
+            return res
         end
     end
 
@@ -548,6 +606,7 @@ module Bro
                     @inline = true
                 when :cursor_asm_label_attr, :cursor_unexposed_attr, :cursor_annotate_attr
                     attribute = Bro.parse_attribute(cursor)
+                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: Function #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -634,6 +693,7 @@ module Bro
                 # Ignored
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
+                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: ObjC property #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -731,6 +791,7 @@ module Bro
                     @properties.push(ObjCProperty.new(model, cursor, self))
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
+                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: ObjC class #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -780,6 +841,7 @@ module Bro
                     @properties.push(ObjCProperty.new(model, cursor, self))
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
+                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: ObjC protocol #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -831,6 +893,7 @@ module Bro
                     @properties.push(ObjCProperty.new(model, cursor, self))
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
+                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: ObjC category #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -1310,7 +1373,7 @@ module Bro
         end
 
         def append_key_class(lines)
-            @values.sort_by { |v| v.since || '' }
+            @values.sort_by { |v| v.since || 0.0 }
 
             lines << "@Library(#{$library})"
             lines << 'public static class Keys {'
@@ -1368,6 +1431,7 @@ module Bro
                 # Ignored
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
+                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: Global value #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -1432,6 +1496,7 @@ module Bro
                 case cursor.kind
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
+                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: Enum value #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -1482,6 +1547,7 @@ module Bro
                     values.push EnumValue.new model, cursor, self
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
+                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: enum #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute #{Bro.read_attribute(cursor)}"
                     end
@@ -1561,7 +1627,7 @@ module Bro
 
     class Model
         attr_accessor :conf, :typedefs, :functions, :objc_classes, :objc_protocols, :objc_categories, :global_values, :global_value_enums, :global_value_dictionaries, :constant_values, :structs, :enums, :cfenums,
-                      :cfoptions, :conf_functions, :conf_values, :conf_constants, :conf_classes, :conf_protocols, :conf_categories, :conf_enums
+                      :cfoptions, :conf_functions, :conf_values, :conf_constants, :conf_classes, :conf_protocols, :conf_categories, :conf_enums, :macroses
         def initialize(conf)
             @conf = conf
             @conf_typedefs = @conf['typedefs'] || {}
@@ -1586,10 +1652,49 @@ module Bro
             @cfenums = [] # CF_ENUM(..., name) locations
             @cfoptions = [] # CF_OPTIONS(..., name) locations
             @type_cache = {}
+            @macroses = []
         end
 
         def inspect
             object_id
+        end
+
+        def expand_macro(source)
+            source = source.split(/\s*\\*\s*\n/).join(" ")
+            # name
+            name = source[/^[A-Za-z_][A-Za-z_0-9]*/]
+            # find macro
+            m = @macroses.find { |e| e.name == name }
+            return source unless m
+
+            # remove name
+            s = source.gsub(/^[A-Za-z_][A-Za-z_0-9]*/, '').strip
+            # check if there is a params
+            return source unless s.start_with?("(")
+
+            # use list of params
+            print source unless s
+            print source unless s[/^\(.*?\)/]
+            params = s[/^\(.*?\)/][1..-2]
+            args = params.scan /(?:"(?:""|.)*?"(?!")|[^,]*?\(.*?\)|[^,]+)/
+            args = args.collect{|x| x.strip || x}
+
+            # to replace them in macro
+            res = m.subst(args)
+            return source unless res
+            res = res.gsub('__IPHONE_', '') # todo: experimental
+            # puts "expanded: #{source} ---> #{res}"
+            res
+        end
+
+        # performs macro-expansion for attribute if it is required (if inital pass didn't give any data )
+        def expand_attribute_if_needed(attribute, cursor)
+            if attribute.is_a?(AvailableAttribute) && attribute.empty?
+                s = expand_macro(cursor.extent.text)
+                expanded_attribute = AvailableAttribute.new(s)
+                attribute = expanded_attribute unless expanded_attribute.empty?
+            end
+            return attribute
         end
 
         def resolve_type_by_name(name)
@@ -1978,6 +2083,9 @@ module Bro
                             v = @constant_values.find { |e| e.name == src }
                             if v
                                 @constant_values.push ConstantValue.new self, cursor, v.value, v.type
+                            else
+                                # puts "Adding macro #{cursor.extent.text}"
+                                @macroses.push Macro.new cursor.extent.text
                             end
                         end
                     end
@@ -2917,7 +3025,7 @@ ARGV[1..-1].each do |yaml_file|
         clines = []
         indentation = '    '
 
-        e.values.sort_by { |v| v.since || '' }
+        e.values.sort_by { |v| v.since || 0.0 }
 
         e.values.find_all { |v| v.is_available? && !v.is_outdated? }.each do |v|
             vconf = model.get_value_conf(v.name)
