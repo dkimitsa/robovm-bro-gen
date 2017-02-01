@@ -433,7 +433,7 @@ module Bro
             return IgnoredAttribute.new source
         elsif source == 'NS_UNAVAILABLE' || source == '__unavailable' || source.start_with?('OBJC_UNAVAILABLE') || source.start_with?('OBJC_SWIFT_UNAVAILABLE') ||
               source == 'UNAVAILABLE_ATTRIBUTE' || source == '__IOS_PROHIBITED' || source.match(/API_UNAVAILABLE\(.*ios/) || # TODO should differ between platforms?
-              source =~ /deprecated\(".*"\)/ || source == 'deprecated' || source == 'unavailable'
+              source =~ /deprecated\(".*"\)/ || source == 'deprecated' || source == 'unavailable' || source =='AV_INIT_UNAVAILABLE' # TODO AV_INIT_UNAVAILABLE is not expanded to NS_ANAVALIABLE so has to handle here
             return UnavailableAttribute.new source
         elsif source.match(/_AVAILABLE/) || source.match(/_DEPRECATED/) ||
               source.match(/_AVAILABLE_STARTING/) || source.match(/_AVAILABLE_BUT_DEPRECATED/)
@@ -1864,7 +1864,7 @@ module Bro
                         elsif get_class_conf(td.name)
                             td
                         else
-                            e = @enums.find { |e| e.name == name }
+                            e = @enums.find { |e| e.name == name || e.id == td.id}
                             e || resolve_type(td.typedef_type)
                         end
                     end
@@ -1978,16 +1978,16 @@ module Bro
 
         def is_included?(entity)
             framework = conf['framework']
+            internal_frameworks = conf['internal_frameworks']
             path_match = conf['path_match']
 
+            # checking library here as well as AudioUnit currently in AudioToolBox which cause all API is not included
             if path_match && entity.location.file.match(path_match)
                 true
+            elsif framework && entity.framework == framework || internal_frameworks && internal_frameworks.include?(entity.framework)
+                true
             else
-                if framework
-                    entity.framework == framework
-                else
-                    false
-                end
+                false
             end
         end
 
@@ -2006,7 +2006,8 @@ module Bro
                       /^hides/, /^ignores/, /^includes/, /^infers/, /^installs/, /^invalidates/, /^keeps/, /^locks/, /^marks/, /^masks/, /^merges/, /^migrates/, /^needs/,
                       /^normalizes/, /^notifies/, /^obscures/, /^opens/, /^overrides/, /^pauses/, /^performs/, /^prefers/, /^presents/, /^preserves/, /^propagates/,
                       /^provides/, /^reads/, /^receives/, /^recognizes/, /^remembers/, /^removes/, /^requests/, /^requires/, /^resets/, /^resumes/, /^returns/, /^reverses/,
-                      /^scrolls/, /^searches/, /^sends/, /^shows/, /^simulates/, /^sorts/, /^supports/, /^suppresses/, /^tracks/, /^translates/, /^uses/, /^wants/, /^writes/
+                      /^scrolls/, /^searches/, /^sends/, /^shows/, /^simulates/, /^sorts/, /^supports/, /^suppresses/, /^tracks/, /^translates/, /^uses/, /^wants/, /^writes/,
+                      /^preloads/
                         getter = name
                     else
                         getter = "is#{base}"
@@ -2123,12 +2124,12 @@ module Bro
                                 end
                             end
                             if value
-                                $stderr.puts "WARN: Turning the gloval value #{cursor.spelling} into constants"
+                                $stderr.puts "WARN: Turning the global value #{cursor.spelling} into constants"
                             else
-                                $stderr.puts "WARN: Failed to turning the gloval value #{cursor.spelling} into constants (eval failed)"
+                                $stderr.puts "WARN: Failed to turning the global value #{cursor.spelling} into constants (eval failed)"
                             end
                         else
-                            $stderr.puts "WARN: Ignoring static gloval value #{cursor.spelling} without value at #{Bro.location_to_s(cursor.location)}"
+                            $stderr.puts "WARN: Ignoring static global value #{cursor.spelling} without value at #{Bro.location_to_s(cursor.location)}"
                         end
                     end
                     next :continue
@@ -2509,7 +2510,12 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
         end
         name = conf['name']
         unless name
-            name = method.name.tr(':', '$')
+            if method.name.end_with?(':') && method.name.count(':') == 1
+                # dont attach $ char to one parameter method, just remove it
+                name = method.name[0..-2]
+            else
+                name = method.name.tr(':', '$')
+            end
             if method.parameters.empty? && method.return_type.kind != :type_void && conf['property']
                 base = name[0, 1].upcase + name[1..-1]
                 name = ret_type[0] == 'boolean' ? "is#{base}" : "get#{base}"
@@ -2755,6 +2761,16 @@ ARGV[1..-1].each do |yaml_file|
         conf['enums'] = c_enums.merge(conf['enums'] || {})
         conf['typedefs'] = (c['typedefs'] || {}).merge(conf['typedefs'] || {})
         conf['annotations'] = (c['annotations'] || []).concat(conf['annotations'] || [])
+        # copy and exclude also functions/values/consts other than trap
+        # it is required for AudioToolBox module as it includes AudioUnit entities
+        # which causes baunch of duplicates to appear in ToolBox from AudioUnit
+        c_functions = (c['functions'] || {}).find_all{|k, v| v['name'] != 'Function__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+        conf['functions'] = c_functions.merge(conf['functions'] || {})
+        c_values = (c['values'] || {}).find_all{|k, v| v['name'] != 'Value__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+        conf['values'] = c_values.merge(conf['values'] || {})
+        c_constants = (c['constants'] || {}).find_all{|k, v| v['name'] != 'Constant__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+        conf['constants'] = c_constants.merge(conf['constants'] || {})
+
         imports.push("#{c['package']}.*") if c['package']
 
         if custom_framework
