@@ -212,21 +212,43 @@ module Bro
         def initialize(return_type, param_types)
             super(nil, nil)
             @return_type = return_type
-            @param_types = param_types
+            @param_types = param_types | []
         end
 
         def types
             [@return_type.types] + @param_types.map(&:types)
         end
 
+        @@simple_block_types = {'boolean' => 'Boolean', 'byte' => 'Byte',
+            'short' => 'Short', 'char' => 'Character', 'int' => 'Integer',
+            'long' => 'Long', 'float' => 'Float', 'double' => 'Double'}
         def java_name
-            if @return_type.is_a?(Builtin) && @return_type.name == 'void' && @param_types.empty?
-                '@Block Runnable'
-            elsif @return_type.is_a?(Builtin) && @return_type.name == 'void' &&
-                  @param_types.size == 1 && @param_types[0].is_a?(Builtin) && @param_types[0].name == 'boolean'
-                '@Block VoidBooleanBlock'
+            if @return_type.is_a?(Builtin) && @return_type.name == 'void'
+                if @param_types.empty?
+                    '@Block Runnable'
+                elsif @param_types.size == 1 && @param_types[0].is_a?(Builtin) && @@simple_block_types[@param_types[0].name]
+                    "@Block Void#{@param_types[0].name.capitalize}Block"
+                elsif @param_types.size <= 6
+                    "@Block VoidBlock#{@param_types.size}<" + @param_types.map { |e| to_java_name(e) }.join(", ") + ">"
+                else
+                    'ObjCBlock'
+                end
             else
-                'ObjCBlock'
+                if @param_types.size == 0 && @return_type.is_a?(Builtin) && @@simple_block_types[@return_type.name]
+                    "@Block #{@param_types[0].name.capitalize}Block"
+                elsif @param_types.size <= 6
+                    "@Block VoidBlock#{@param_types.size}<" + @param_types.map { |e| e.java_name }.push(to_java_name(return_type)).join(", ") + ">"
+                else
+                    'ObjCBlock'
+                end
+            end
+        end
+
+        def to_java_name(type)
+            if type.respond_to?('each') # Generic type
+                "#{type[0].java_name}<#{type[1].java_name}>"
+            else
+                @@simple_block_types[type.java_name] || type.java_name
             end
         end
     end
@@ -1883,12 +1905,12 @@ module Bro
                     (1..dimensions.size).inject(resolve_type(base_type)) { |t, _i| t.pointer }
                 end
             elsif type.kind == :type_block_pointer
-                if name =~ /^void *\(\^\)\((void)?\)$/
-                    Block.new(Bro.builtins_by_type_kind(:type_void), [])
-                elsif name =~ /^void *\(\^\)\(BOOL\)$/
-                    Block.new(Bro.builtins_by_type_kind(:type_void), [Bro.builtins_by_type_kind(:type_bool)])
-                else
-                    $stderr.puts "WARN: Unknown block type #{name}. Using ObjCBlock."
+                begin
+                    ret_type = resolve_type(type.pointee.result_type)
+                    param_types = (0..type.pointee.num_arg_types-1).map { |idx| resolve_type(type.pointee.arg_type(idx))}
+                    Block.new(ret_type, param_types)
+                rescue => e
+                    $stderr.puts "WARN: Unknown block type #{name}. Using ObjCBlock. Failed to convert due: #{e}"
                     Bro.builtins_by_type_kind(type.kind)
                 end
             else
