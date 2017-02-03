@@ -108,7 +108,7 @@ module Bro
         end
 
         def is_available?
-            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) }
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && !e.empty?}
             if attrib
                 $mac_version && attrib.mac_version && attrib.mac_version.to_f <= $mac_version.to_f ||
                     $ios_version && attrib.ios_version && attrib.ios_version.to_f <= $ios_version.to_f || false
@@ -128,12 +128,12 @@ module Bro
         end
 
         def since
-            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) }
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && !e.empty?}
             attrib.ios_version if attrib
         end
 
         def deprecated
-            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) }
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && !e.empty?}
             attrib.ios_dep_version if attrib
         end
     end
@@ -428,7 +428,7 @@ module Bro
         end
 
         def empty?
-            res = !@ios_version && !ios_dep_version
+            res = !@ios_version
             return res
         end
     end
@@ -458,7 +458,8 @@ module Bro
               source =~ /deprecated\(".*"\)/ || source == 'deprecated' || source == 'unavailable' || source =='AV_INIT_UNAVAILABLE' # TODO AV_INIT_UNAVAILABLE is not expanded to NS_ANAVALIABLE so has to handle here
             return UnavailableAttribute.new source
         elsif source.match(/_AVAILABLE/) || source.match(/_DEPRECATED/) ||
-              source.match(/_AVAILABLE_STARTING/) || source.match(/_AVAILABLE_BUT_DEPRECATED/)
+              source.match(/_AVAILABLE_STARTING/) || source.match(/_AVAILABLE_BUT_DEPRECATED/) ||
+              source.match(/_AVAILABILITY/)
             return AvailableAttribute.new source
         else
             return UnsupportedAttribute.new source
