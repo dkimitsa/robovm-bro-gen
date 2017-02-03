@@ -1685,7 +1685,7 @@ module Bro
             @cfenums = [] # CF_ENUM(..., name) locations
             @cfoptions = [] # CF_OPTIONS(..., name) locations
             @type_cache = {}
-            @macroses = []
+            @macroses = {}
         end
 
         def inspect
@@ -1697,20 +1697,20 @@ module Bro
             # name
             name = source[/^[A-Za-z_][A-Za-z_0-9]*/]
             # find macro
-            m = @macroses.find { |e| e.name == name }
+            m = @macroses[name]
             return source unless m
 
             # remove name
             s = source.gsub(/^[A-Za-z_][A-Za-z_0-9]*/, '').strip
             # check if there is a params
-            return source unless s.start_with?("(")
-
-            # use list of params
-            print source unless s
-            print source unless s[/^\(.*?\)/]
-            params = s[/^\(.*?\)/][1..-2]
-            args = params.scan /(?:"(?:""|.)*?"(?!")|[^,]*?\(.*?\)|[^,]+)/
-            args = args.collect{|x| x.strip || x}
+            if s.start_with?("(")
+                # use list of params
+                params = s[/^\(.*?\)/][1..-2]
+                args = params.scan /(?:"(?:""|.)*?"(?!")|[^,]*?\(.*?\)|[^,]+)/
+                args = args.collect{|x| x.strip || x}
+            else
+                args = []
+            end
 
             # to replace them in macro
             res = m.subst(args)
