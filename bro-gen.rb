@@ -1755,7 +1755,6 @@ module Bro
 
         def resolve_type(type, allow_arrays = false, owner = nil, method = nil)
             cache_id = build_type_cache_name(type)
-            puts "DEBUG: resolve_type #{cache_id}"
             t = @type_cache[cache_id]
             unless t
                 t = resolve_type0(type, allow_arrays, owner, method)
