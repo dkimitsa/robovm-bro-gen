@@ -1745,8 +1745,18 @@ module Bro
             e || (orig_name != name ? Builtin.new(name) : nil)
         end
 
+        def build_type_cache_name(type)
+            if type.kind == :type_typedef && !@typedefs.find { |e| e.name == type.spelling } && type.declaration.kind == :cursor_template_type_parameter
+                # use lexical parent to as prefix to cache's key otherwise there will be wrong types picked up under same template type name
+                return type.declaration.lexical_parent.spelling.to_s + "." + type.spelling
+            end
+            return type.spelling
+        end
+
         def resolve_type(type, allow_arrays = false, owner = nil, method = nil)
-            t = @type_cache[type.spelling]
+            cache_id = build_type_cache_name(type)
+            puts "DEBUG: resolve_type #{cache_id}"
+            t = @type_cache[cache_id]
             unless t
                 t = resolve_type0(type, allow_arrays, owner, method)
                 raise "Failed to resolve type '#{type.spelling}' with kind #{type.kind} defined at #{Bro.location_to_s(type.declaration.location)}" unless t
@@ -1754,7 +1764,7 @@ module Bro
                     # Callback.
                     t = Bro.builtins_by_name('FunctionPtr')
                 end
-                @type_cache[type.spelling] = t if type.spelling != 'instancetype'
+                @type_cache[cache_id] = t if type.spelling != 'instancetype'
             end
             t
         end
@@ -1889,7 +1899,7 @@ module Bro
                     td = @typedefs.find { |e| e.name == name }
                     if !td
                         if type.declaration.kind == :cursor_template_type_parameter
-                            resolve_type(type.canonical)
+                            resolve_type(type.declaration.underlying_type)
                         else
                             # Check builtins for builtin typedefs like va_list
                             Bro.builtins_by_name(name)
