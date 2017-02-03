@@ -199,7 +199,7 @@ module Bro
                 else
                     "#{@base_type.java_name}.#{@base_type.java_name}Ptr"
                 end
-            elsif @base_type.is_a?(Struct) || @base_type.is_a?(Typedef) && @base_type.struct
+            elsif @base_type.is_a?(Struct) || @base_type.is_a?(Typedef) && @base_type.is_struct?
                 @base_type.java_name
             else
                 "#{@base_type.java_name}.#{@base_type.java_name}Ptr"
@@ -513,12 +513,21 @@ module Bro
 
     class Typedef < Entity
         attr_accessor :typedef_type, :parameters, :struct, :enum
-        def initialize(model, cursor)
+        def initialize(model, cursor, struct_def_name = nil)
             super(model, cursor)
-            @typedef_type = cursor.typedef_type
             @parameters = []
             @struct = nil
             @enum = nil
+
+            if struct_def_name
+                @name = struct_def_name
+                @typedef_type = :type_record
+                @is_structDef = true
+                return
+            end
+
+            @is_structDef = false
+            @typedef_type = cursor.typedef_type
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
                 when :cursor_parm_decl
@@ -541,7 +550,7 @@ module Bro
         end
 
         def is_struct?
-            @struct != nil
+            @struct != nil || @is_structDef
         end
 
         def is_enum?
@@ -1654,6 +1663,7 @@ module Bro
         def initialize(conf)
             @conf = conf
             @conf_typedefs = @conf['typedefs'] || {}
+            @conf_structdefs = @conf['structdefs'] || {}
             @conf_enums = @conf['enums'] || {}
             @conf_functions = @conf['functions'] || {}
             @conf_values = conf['values'] || {}
@@ -1761,6 +1771,9 @@ module Bro
                 resolve_type_by_name gen_name
             elsif @conf_typedefs[name]
                 resolve_type_by_name name
+            elsif @conf_structdefs[name]
+                # create a typedef for this structure, mark it
+                Typedef.new self, nil, @conf_structdefs[name]
             elsif type.kind == :type_pointer
                 if type.pointee.kind == :type_unexposed && name.match(/\(\*\)/)
                     # Callback. libclang does not expose info for callbacks.
@@ -1988,7 +2001,7 @@ module Bro
         end
 
         def to_java_type(type)
-            if type.is_a?(Struct) || type.is_a?(Typedef) && (type.struct || type.typedef_type.kind == :type_record)
+            if type.is_a?(Struct) || type.is_a?(Typedef) && (type.is_struct? || type.typedef_type.kind == :type_record)
                 "@ByVal #{type.java_name}"
             elsif type.is_a?(Array)
                 "@Array({#{type.dimensions.join(', ')}}) #{type.java_name}"
@@ -2109,7 +2122,7 @@ module Bro
                                 @constant_values.push ConstantValue.new self, cursor, v.value, v.type
                             else
                                 # puts "Adding macro #{cursor.extent.text}"
-                                @macroses.push Macro.new cursor.extent.text
+                                @macroses[name] = Macro.new cursor.extent.text unless @macroses[name]
                             end
                         end
                     end
@@ -2725,6 +2738,7 @@ ARGV[1..-1].each do |yaml_file|
 
     conf = global.merge conf
     conf['typedefs'] = (global['typedefs'] || {}).merge(conf['typedefs'] || {}).merge(conf['private_typedefs'] || {})
+    conf['structdefs'] = (global['structdefs'] || {}).merge(conf['structdefs'] || {}).merge(conf['private_structdefs'] || {})
 
     framework_roots = []
 
@@ -2783,6 +2797,7 @@ ARGV[1..-1].each do |yaml_file|
         c_enums = (c['enums'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
         conf['enums'] = c_enums.merge(conf['enums'] || {})
         conf['typedefs'] = (c['typedefs'] || {}).merge(conf['typedefs'] || {})
+        conf['structdefs'] = (c['structdefs'] || {}).merge(conf['structdefs'] || {})
         conf['annotations'] = (c['annotations'] || []).concat(conf['annotations'] || [])
         # copy and exclude also functions/values/consts other than trap
         # it is required for AudioToolBox module as it includes AudioUnit entities
