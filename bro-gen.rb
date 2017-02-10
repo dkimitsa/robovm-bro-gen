@@ -110,8 +110,8 @@ module Bro
         def is_available?
             attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && !e.empty?}
             if attrib
-                $mac_version && attrib.mac_version && attrib.mac_version.to_f <= $mac_version.to_f ||
-                    $ios_version && attrib.ios_version && attrib.ios_version.to_f <= $ios_version.to_f || false
+                # TODO: there is a mess in platforms (macos, ios, tvos, watchos) so checking only ios now
+                $ios_version && attrib.ios_version && attrib.ios_version != -1 && attrib.ios_version <= $ios_version.to_f || false
             else
                 attrib = @attributes.find { |e| e.is_a?(UnavailableAttribute) }
                 true unless attrib
@@ -335,7 +335,14 @@ module Bro
             @ios_version = nil
             @mac_dep_version = nil
             @ios_dep_version = nil
-            args = args.map { |e| e.sub(/^[A-Z_]+/, '') }
+            # TODO: replaced this sub with proper platform replacement as experimental
+            # as it looks like it was primary goal. also it removes NA statements
+            # which are required
+            # args = args.map { |e| e.sub(/^[A-Z_]+\d+/, '') }
+            args = args.map { |e| e.sub(/^__MAC_/, '') }
+            args = args.map { |e| e.sub(/^__IPHONE_/, '') }
+            args = args.map { |e| e.sub(/^__TVOS_/, '') }
+            args = args.map { |e| e.sub(/^__WATCHOS_/, '') }
             args = args.map { |e| e.tr('_', '.') }
             if source =~ /API_AVAILABLE\s*\(/
                 args.each do |v|
@@ -347,8 +354,12 @@ module Bro
                 end
             elsif source =~ /_AVAILABLE_IOS(_ONLY)?\s*\(/
                 @ios_version = args[0]
+            elsif source =~ /_AVAILABLE_TVOS_ONLY\s*\(/
+                @mac_version = "NA"
+                @ios_version = "NA"
             elsif source =~ /_AVAILABLE_MAC\s*\(/
                 @mac_version = args[0]
+                @ios_version = "NA"
             elsif source =~ /_WATCHOS_AVAILABLE\s*\(/
                 # skip as it breaks ios version
             elsif source =~ /_TVOS_AVAILABLE\s*\(/
@@ -365,6 +376,7 @@ module Bro
             elsif source =~ /_DEPRECATED_MAC\s*\(/
                 @mac_version = args[0]
                 @mac_dep_version = args[1]
+                @ios_version = "NA"
             elsif source =~ /_DEPRECATED_IOS\s*\(/
                 @ios_version = args[0]
                 @ios_dep_version = args[1]
@@ -421,6 +433,7 @@ module Bro
 
         def str_to_float(s)
             begin
+                return -1 if s == "NA"
                 return Float(s).to_f
             rescue
                 return nil
@@ -2808,15 +2821,18 @@ ARGV[1..-1].each do |yaml_file|
         conf['typedefs'] = (c['typedefs'] || {}).merge(conf['typedefs'] || {})
         conf['structdefs'] = (c['structdefs'] || {}).merge(conf['structdefs'] || {})
         conf['annotations'] = (c['annotations'] || []).concat(conf['annotations'] || [])
-        # copy and exclude also functions/values/consts other than trap
-        # it is required for AudioToolBox module as it includes AudioUnit entities
-        # which causes baunch of duplicates to appear in ToolBox from AudioUnit
-        c_functions = (c['functions'] || {}).find_all{|k, v| v['name'] != 'Function__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
-        conf['functions'] = c_functions.merge(conf['functions'] || {})
-        c_values = (c['values'] || {}).find_all{|k, v| v['name'] != 'Value__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
-        conf['values'] = c_values.merge(conf['values'] || {})
-        c_constants = (c['constants'] || {}).find_all{|k, v| v['name'] != 'Constant__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
-        conf['constants'] = c_constants.merge(conf['constants'] || {})
+        if conf['merge_vals_const_funct']
+            # TODO: this is experimental and required for AudioUnit only for now
+            # copy and exclude also functions/values/consts other than trap
+            # it is required for AudioToolBox module as it includes AudioUnit entities
+            # which causes baunch of duplicates to appear in ToolBox from AudioUnit
+            c_functions = (c['functions'] || {}).find_all{|k, v| v['name'] != 'Function__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+            conf['functions'] = c_functions.merge(conf['functions'] || {})
+            c_values = (c['values'] || {}).find_all{|k, v| v['name'] != 'Value__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+            conf['values'] = c_values.merge(conf['values'] || {})
+            c_constants = (c['constants'] || {}).find_all{|k, v| v['name'] != 'Constant__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+            conf['constants'] = c_constants.merge(conf['constants'] || {})
+        end
 
         imports.push("#{c['package']}.*") if c['package']
 
@@ -2859,8 +2875,9 @@ ARGV[1..-1].each do |yaml_file|
 
     potential_constant_enums = []
     model.enums.each do |enum|
+        next if !enum.is_available? || enum.is_outdated?
         c = model.get_enum_conf(enum.name)
-        if c && !c['exclude'] && !enum.is_outdated?
+        if c && !c['exclude']
             data = {}
             java_name = enum.java_name
             bits = enum.is_options? || c['bits']
