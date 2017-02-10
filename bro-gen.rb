@@ -2821,7 +2821,7 @@ ARGV[1..-1].each do |yaml_file|
         conf['typedefs'] = (c['typedefs'] || {}).merge(conf['typedefs'] || {})
         conf['structdefs'] = (c['structdefs'] || {}).merge(conf['structdefs'] || {})
         conf['annotations'] = (c['annotations'] || []).concat(conf['annotations'] || [])
-        if conf['merge_vals_const_funct']
+        if conf['merge_vals_consts_functs']
             # TODO: this is experimental and required for AudioUnit only for now
             # copy and exclude also functions/values/consts other than trap
             # it is required for AudioToolBox module as it includes AudioUnit entities
