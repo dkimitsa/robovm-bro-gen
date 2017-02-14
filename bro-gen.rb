@@ -16,12 +16,11 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/gpl-2.0.html>.
 #
 
-$LOAD_PATH.unshift File.dirname(__FILE__) + '/ffi-clang/lib'
-
 require 'ffi/clang'
 require 'yaml'
 require 'fileutils'
 require 'pathname'
+require 'tmpdir'
 
 class String
     def camelize
@@ -2727,6 +2726,87 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
     end
 end
 
+class ClangPreprocessorInclude
+    attr_accessor :name, :file
+    def initialize(name, write_name, parent = nil)
+        @name = name
+        @parent = parent
+        dirname = File.dirname(write_name)
+        FileUtils.mkdir_p(dirname) unless File.directory?(dirname)
+        @file = File.open(write_name, "w")
+    end
+
+    def write_string(s)
+        file.puts s
+    end
+
+    def close
+        return unless file
+        file.close
+        file = nil
+    end
+end
+
+
+def clang_preprocess(header, args)
+    file_idx = 1
+    include_stack = []
+    tmp_dir = Dir.mktmpdir()
+    at_exit { FileUtils.remove_entry(tmp_dir)}
+    main_file = nil
+
+    lines = IO.popen(['clang', header] + args).readlines
+    lines.each do |line|
+        if !line.start_with?('# ')
+            # data line
+            raise "Unexpected data line while includes are empty #{line}" unless include_stack.length
+
+            include_stack.last.write_string line
+            next
+        end
+
+        line.strip
+        if !(line =~ /^# (?:\d+) \"(.*)\"\ ?([\d\ ]+)?$/)
+            raise "Unable to parse preprocessor line marker: #{line}"
+        end
+
+        file_name = $1
+        args = $2 ? $2.split(' ') : []
+
+
+        file_name = File.expand_path(file_name)
+        if args.length == 0
+            next unless include_stack.empty?
+
+            main_file = File.join(tmp_dir, file_name)
+            include_stack.push ClangPreprocessorInclude.new(file_name, main_file)
+        elsif args.include?('1')
+            raise "there is no main file while inluding header" if include_stack.empty?
+
+            # entering into file
+            write_file_name = File.join(tmp_dir, file_name + ".#{file_idx}.h")
+            file_idx += 1
+            include_stack.last.write_string "\#include \"#{write_file_name}\""
+            include_stack.push ClangPreprocessorInclude.new(file_name, write_file_name)
+        elsif args.include?('2')
+            # exiting from file
+            while include_stack.last.name != file_name
+                include_stack.last.close
+                include_stack.pop
+            end
+        end
+    end
+
+    while !include_stack.empty?
+        include_stack.last.close
+        include_stack.pop
+    end
+
+    main_file = File.expand_path(main_file)
+    return main_file
+end
+
+
 $mac_version = nil
 $ios_version = '10.0'
 xcode_dir = `xcode-select -p`.chomp
@@ -2851,19 +2931,28 @@ ARGV[1..-1].each do |yaml_file|
     imports_s = "\n" + imports.map { |im| "import #{im};" }.join("\n") + "\n"
 
     index = FFI::Clang::Index.new
-    clang_args = ['-arch', 'arm64', '-mthumb', '-miphoneos-version-min', $ios_version, '-fblocks', '-isysroot', sysroot]
+    clang_preprocess_args = ['-E', '-dD', '-arch', 'arm64', '-fblocks', '-isysroot', sysroot]
+    clang_args = ['-arch', 'arm64', '-mthumb', '-miphoneos-version-min', $ios_version, '-fblocks']
 
     headers[1..-1].each do |e|
-        clang_args.push('-include')
-        clang_args.push(File.join(header_root, e))
+        clang_preprocess_args.push('-include')
+        clang_preprocess_args.push(File.join(header_root, e))
     end
 
     framework_roots.each do |e|
-        clang_args << "-F#{e}" if e != sysroot
+        clang_preprocess_args << "-F#{e}" if e != sysroot
     end
 
+    clang_preprocess_args += conf['clang_args'] if conf['clang_args']
     clang_args += conf['clang_args'] if conf['clang_args']
-    translation_unit = index.parse_translation_unit(File.join(header_root, headers[0]), clang_args, [], detailed_preprocessing_record: true)
+    clang_preprocess_args.push "-ObjC" if clang_preprocess_args.include?('objective-c')
+
+    # preprocess files using clang to expand all macro to be able better understand
+    # attributes and enum/types definitions
+    main_file = clang_preprocess(File.join(header_root, headers[0]), clang_preprocess_args)
+
+    # now translate pre-processed
+    translation_unit = index.parse_translation_unit(main_file, clang_args, [], detailed_preprocessing_record: true)
 
     model = Bro::Model.new conf
     model.process(translation_unit.cursor)
@@ -3325,7 +3414,7 @@ ARGV[1..-1].each do |yaml_file|
     members = {}
     (model.objc_classes + model.objc_protocols).each do |cls|
         c = cls.is_a?(Bro::ObjCClass) ? model.get_class_conf(cls.name) : model.get_protocol_conf(cls.name)
-        next unless c && !c['exclude']
+        next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
         owner = c['name'] || cls.java_name
         members[owner] = members[owner] || { owner: cls, owner_name: owner, members: [], conf: c }
         members[owner][:members].push([cls.instance_methods + cls.class_methods + cls.properties, c])
@@ -3339,7 +3428,7 @@ ARGV[1..-1].each do |yaml_file|
         owner = nil
         if owner_cls
             owner_conf = model.get_class_conf(owner_cls.name)
-            if owner_conf && !owner_conf['exclude']
+            if owner_conf && !owner_conf['exclude'] && owner_cls.is_available? && !owner_cls.is_outdated?
                 owner = owner_conf['name'] || owner_cls.java_name
                 members[owner] = members[owner] || { owner: owner_cls, owner_name: owner, members: [], conf: owner_conf }
                 members[owner][:members].push([cat.instance_methods + cat.class_methods + cat.properties, owner_conf])
@@ -3391,7 +3480,8 @@ ARGV[1..-1].each do |yaml_file|
     # Add all methods defined by protocols to all implementing classes
     model.objc_classes.find_all { |cls| !cls.is_opaque? }.each do |cls|
         c = model.get_class_conf(cls.name)
-        next unless c && !c['exclude']
+        next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
+
         owner = c['name'] || cls.java_name
         prots = all_protocols(model, cls, c)
         if cls.superclass
@@ -3435,7 +3525,7 @@ ARGV[1..-1].each do |yaml_file|
 
     model.objc_classes.find_all { |cls| !cls.is_opaque? } .each do |cls|
         c = model.get_class_conf(cls.name)
-        next unless c && !c['exclude'] && !cls.is_outdated?
+        next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
         name = c['name'] || cls.java_name
         data = template_datas[name] || {}
         data['name'] = name
