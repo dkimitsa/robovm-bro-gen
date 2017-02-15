@@ -107,13 +107,18 @@ module Bro
         end
 
         def is_available?
-            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && !e.empty?}
+            # check if directly unavailable
+            attrib = @attributes.find { |e| e.is_a?(UnavailableAttribute) }
+            return false if attrib
+
+            # check if available
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.version != nil  && e.platform == $target_platform }
             if attrib
                 # TODO: there is a mess in platforms (macos, ios, tvos, watchos) so checking only ios now
-                $ios_version && attrib.ios_version && attrib.ios_version != -1 && attrib.ios_version <= $ios_version.to_f || false
+                $ios_version && attrib.version != -1 && attrib.version <= $ios_version.to_f || false
             else
-                attrib = @attributes.find { |e| e.is_a?(UnavailableAttribute) }
-                true unless attrib
+                # nothing specified so available
+                true
             end
         end
 
@@ -127,13 +132,13 @@ module Bro
         end
 
         def since
-            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && !e.empty?}
-            attrib.ios_version if attrib
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.version != nil && e.platform == $target_platform }
+            attrib.version if attrib
         end
 
         def deprecated
-            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && !e.empty?}
-            attrib.ios_dep_version if attrib
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.dep_version != nil && e.platform == $target_platform }
+            attrib.dep_version if attrib
         end
     end
 
@@ -208,10 +213,10 @@ module Bro
 
     class Block < Entity
         attr_accessor :return_type, :param_types
-        def initialize(return_type, param_types)
-            super(nil, nil)
+        def initialize(model, return_type, param_types)
+            super(model, nil)
             @return_type = return_type
-            @param_types = param_types | []
+            @param_types = param_types || []
         end
 
         def types
@@ -228,7 +233,10 @@ module Bro
                 elsif @param_types.size == 1 && @param_types[0].is_a?(Builtin) && @@simple_block_types[@param_types[0].name]
                     "@Block Void#{@param_types[0].name.capitalize}Block"
                 elsif @param_types.size <= 6
-                    "@Block VoidBlock#{@param_types.size}<" + @param_types.map { |e| to_java_name(e) }.join(", ") + ">"
+                    by_val_params = @param_types.map { |e| @model.is_byval_type?(e) ? '@ByVal' : '' }.join(",")
+                    by_val_mark = ''
+                    by_val_mark = "(\"(#{by_val_params})\")" if !by_val_params.gsub(',', '').empty?
+                    "@Block#{by_val_mark} VoidBlock#{@param_types.size}<" + @param_types.map { |e| to_java_name(e) }.join(", ") + ">"
                 else
                     'ObjCBlock'
                 end
@@ -236,7 +244,10 @@ module Bro
                 if @param_types.size == 0 && @return_type.is_a?(Builtin) && @@simple_block_types[@return_type.name]
                     "@Block #{@param_types[0].name.capitalize}Block"
                 elsif @param_types.size <= 6
-                    "@Block VoidBlock#{@param_types.size}<" + @param_types.map { |e| e.java_name }.push(to_java_name(return_type)).join(", ") + ">"
+                    by_val_params = @param_types.map { |e| @model.is_byval_type?(e) ? '@ByVal' : '' }.join(",")
+                    by_val_mark = ''
+                    by_val_mark = "(\"(#{by_val_params})\")" if !by_val_params.gsub(',', '').empty?
+                    "@Block#{by_val_mark} Block#{@param_types.size}<" + @param_types.map { |e| e.java_name }.push(to_java_name(return_type)).join(", ") + ">"
                 else
                     'ObjCBlock'
                 end
@@ -324,110 +335,25 @@ module Bro
         end
     end
     class AvailableAttribute < Attribute
-        attr_accessor :mac_version, :ios_version, :mac_dep_version, :ios_dep_version
+        attr_accessor :platform, :version, :dep_version
         def initialize(source)
             super(source)
-            s = source.gsub(/^[A-Z_]+\s*\(/, '')
-            s = s.sub(/\)$/, '')
-            args = s.split(/\s*,\s*/)
-            @mac_version = nil
-            @ios_version = nil
-            @mac_dep_version = nil
-            @ios_dep_version = nil
-            # TODO: replaced this sub with proper platform replacement as experimental
-            # as it looks like it was primary goal. also it removes NA statements
-            # which are required
-            # args = args.map { |e| e.sub(/^[A-Z_]+\d+/, '') }
-            args = args.map { |e| e.sub(/^__MAC_/, '') }
-            args = args.map { |e| e.sub(/^__IPHONE_/, '') }
-            args = args.map { |e| e.sub(/^__TVOS_/, '') }
-            args = args.map { |e| e.sub(/^__WATCHOS_/, '') }
-            args = args.map { |e| e.tr('_', '.') }
-            if source =~ /API_AVAILABLE\s*\(/
-                args.each do |v|
-                    if v =~ /ios\((.*)\)/
-                        @ios_version = $1
-                    elsif v =~ /macosx\((.*)\)/
-                        @mac_version = $1
-                    end
-                end
-            elsif source =~ /_AVAILABLE_IOS(_ONLY)?\s*\(/
-                @ios_version = args[0]
-            elsif source =~ /_AVAILABLE_TVOS_ONLY\s*\(/
-                @mac_version = "NA"
-                @ios_version = "NA"
-            elsif source =~ /_AVAILABLE_MAC\s*\(/
-                @mac_version = args[0]
-                @ios_version = "NA"
-            elsif source =~ /_WATCHOS_AVAILABLE\s*\(/
-                # skip as it breaks ios version
-            elsif source =~ /_TVOS_AVAILABLE\s*\(/
-                # skip as it breaks ios version
-            elsif source =~ /_AVAILABLE\s*\(/
-                if args.length == 1
-                    # E.g. MP_EXTERN_CLASS_AVAILABLE(version) = NS_CLASS_AVAILABLE(NA, version).
-                    # Just set both versions to the specified value
-                    @mac_version = @ios_version = args[0]
-                else
-                    @mac_version = args[0]
-                    @ios_version = args[1]
-                end
-            elsif source =~ /_DEPRECATED_MAC\s*\(/
-                @mac_version = args[0]
-                @mac_dep_version = args[1]
-                @ios_version = "NA"
-            elsif source =~ /_DEPRECATED_IOS\s*\(/
-                @ios_version = args[0]
-                @ios_dep_version = args[1]
-            elsif source =~ /_IOS_DEPRECATED\s*\(/
-                @ios_version = args[0]
-                @ios_dep_version = args[1]
-            elsif source =~ /_AVAILABLE_STARTING\s*\(/
-                @mac_version = args[0]
-                @ios_version = args[1]
-            elsif source =~ /_AVAILABLE_IOS_STARTING\s*\(/
-                # E.g. CA_AVAILABLE_IOS_STARTING
-                @ios_version = args[0]
-                # @tvos_version = args[1]
-                # @watchos_version = args[2]
-            elsif source =~ /_AVAILABLE_BUT_DEPRECATED\s*\(/
-                @mac_version = args[0]
-                @mac_dep_version = args[1]
-                @ios_version = args[2]
-                @ios_dep_version = args[3]
-            elsif source =~ /_AVAILABLE_BUT_DEPRECATED_MSG\s*\(/
-                @mac_version = args[0]
-                @mac_dep_version = args[1]
-                @ios_version = args[2]
-                @ios_dep_version = args[3]
-            elsif source =~ /_DEPRECATED\s*\(/
-                if s =~ /ios\((.*),([^\(]*)\)/ || s =~ /macosx\((.*),([^\(]*)\)/
-                    # in availability.h it looks now as bellow
-                    # API_DEPRECATED("No longer supported", macos(10.4, 10.8), ios(2.0, 3.0), watchos(2.0, 3.0), tvos(9.0, 10.0))
-                    # so parse different way
-                    # keep these in separatea args2 split that ignores contents of parentheses (just not to break other cases)
-                    args2 = s.scan(/(?:"(?:""|.)*?"(?!")|[^,]*?\(.*?\)|[^,]+)/)
-                    args2 = args2.collect{|x| x.strip || x}
-                    args2.each do |v|
-                        if v =~ /ios\((.*),([^\(]*)\)/
-                            @ios_version = $1.strip
-                            @ios_dep_version = $2.strip
-                        elsif v =~ /macosx\((.*),([^\(]*)\)/
-                            @mac_version = $1.strip
-                            @mac_dep_version = $2.strip
-                        end
-                    end
-                else
-                    @mac_version = args[0]
-                    @mac_dep_version = args[1]
-                    @ios_version = args[2]
-                    @ios_dep_version = args[3]
+            source =~ /^availability\((.*)\)/
+            s = $1
+            args = s.scan(/(?:"(?:""|.)*?"(?!")|[^,]+)/)
+            args = args.collect{|x| x.strip || x}
+            @version = nil
+            @dep_version = nil
+            @platform = args[0]
+            args[1..-1].each do |v|
+                if v == 'unavailable'
+                    @version = -1
+                elsif v.start_with?('introduced=')
+                    @version = str_to_float(v.sub('introduced=', '').sub('_', '.'))
+                elsif v.start_with?('deprecated=')
+                    @dep_version = str_to_float(v.sub('deprecated=', '').sub('_', '.'))
                 end
             end
-            @mac_version = str_to_float(@mac_version)
-            @mac_dep_version = str_to_float(@mac_dep_version)
-            @ios_version = str_to_float(@ios_version)
-            @ios_dep_version = str_to_float(@ios_dep_version)
         end
 
         def str_to_float(s)
@@ -437,11 +363,6 @@ module Bro
             rescue
                 return nil
             end
-        end
-
-        def empty?
-            res = !@ios_version
-            return res
         end
     end
     class UnavailableAttribute < Attribute
@@ -453,7 +374,7 @@ module Bro
     end
 
     def self.parse_attribute(cursor)
-        source = Bro.read_attribute(cursor)
+        source = Bro.read_source_range(cursor.extent)
         if source.start_with?('__DARWIN_ALIAS_C') || source.start_with?('__DARWIN_ALIAS') ||
            source == 'CF_IMPLICIT_BRIDGING_ENABLED' || source.start_with?('DISPATCH_') || source.match(/^(CF|NS)_RETURNS_RETAINED/) ||
            source.match(/^(CF|NS)_INLINE$/) || source.match(/^(CF|NS)_FORMAT_FUNCTION.*/) || source.match(/^(CF|NS)_FORMAT_ARGUMENT.*/) ||
@@ -462,17 +383,12 @@ module Bro
            source.end_with?('_CLASS_EXPORT') || source.end_with?('_EXPORT') || source == 'NS_REPLACES_RECEIVER' || source == '__objc_exception__' || source == 'OBJC_EXPORT' ||
            source == 'OBJC_ROOT_CLASS' || source == '__ai' || source.end_with?('_EXTERN_WEAK') || source == 'NS_DESIGNATED_INITIALIZER' || source.start_with?('NS_EXTENSION_UNAVAILABLE_IOS') ||
            source == 'NS_REQUIRES_PROPERTY_DEFINITIONS' || source.start_with?('DEPRECATED_MSG_ATTRIBUTE') || source == 'NS_REFINED_FOR_SWIFT' || source.start_with?('NS_SWIFT_NAME') ||
-           source == '__WATCHOS_PROHIBITED' || source == '__TVOS_PROHIBITED' || source.start_with?('NS_SWIFT_UNAVAILABLE') || (source.start_with?('API_UNAVAILABLE') && !source.include?('ios')) ||
-           source == 'UI_APPEARANCE_SELECTOR' || source == 'CF_RETURNS_NOT_RETAINED' || source == 'NS_REQUIRES_SUPER'
+           source.start_with?('NS_SWIFT_UNAVAILABLE') || source == 'UI_APPEARANCE_SELECTOR' || source == 'CF_RETURNS_NOT_RETAINED' || source == 'NS_REQUIRES_SUPER' || source == 'objc_designated_initializer'
             return IgnoredAttribute.new source
-        elsif source == 'NS_UNAVAILABLE' || source == '__unavailable' || source.start_with?('OBJC_UNAVAILABLE') || source.start_with?('OBJC_SWIFT_UNAVAILABLE') ||
-              source == 'UNAVAILABLE_ATTRIBUTE' || source == '__IOS_PROHIBITED' || source.match(/API_UNAVAILABLE\(.*ios/) || # TODO should differ between platforms?
-              source =~ /deprecated\(".*"\)/ || source == 'deprecated' || source == 'unavailable' || source =='AV_INIT_UNAVAILABLE' # TODO AV_INIT_UNAVAILABLE is not expanded to NS_ANAVALIABLE so has to handle here
-            return UnavailableAttribute.new source
-        elsif source.match(/_AVAILABLE/) || source.match(/_DEPRECATED/) ||
-              source.match(/_AVAILABLE_STARTING/) || source.match(/_AVAILABLE_BUT_DEPRECATED/) ||
-              source.match(/_AVAILABILITY/)
+        elsif source.start_with?('availability(')
             return AvailableAttribute.new source
+        elsif source.start_with?('unavailable')
+            return UnavailableAttribute.new source
         else
             return UnsupportedAttribute.new source
         end
@@ -650,7 +566,6 @@ module Bro
                     @inline = true
                 when :cursor_asm_label_attr, :cursor_unexposed_attr, :cursor_annotate_attr
                     attribute = Bro.parse_attribute(cursor)
-                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: Function #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -737,7 +652,6 @@ module Bro
                 # Ignored
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
-                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: ObjC property #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -835,7 +749,6 @@ module Bro
                     @properties.push(ObjCProperty.new(model, cursor, self))
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
-                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: ObjC class #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -885,7 +798,6 @@ module Bro
                     @properties.push(ObjCProperty.new(model, cursor, self))
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
-                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: ObjC protocol #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -937,7 +849,6 @@ module Bro
                     @properties.push(ObjCProperty.new(model, cursor, self))
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
-                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: ObjC category #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -1475,7 +1386,6 @@ module Bro
                 # Ignored
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
-                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: Global value #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -1540,7 +1450,6 @@ module Bro
                 case cursor.kind
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
-                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: Enum value #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
@@ -1591,7 +1500,6 @@ module Bro
                     values.push EnumValue.new model, cursor, self
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
-                    attribute = model.expand_attribute_if_needed(attribute, cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
                         $stderr.puts "WARN: enum #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute #{Bro.read_attribute(cursor)}"
                     end
@@ -1671,7 +1579,7 @@ module Bro
 
     class Model
         attr_accessor :conf, :typedefs, :functions, :objc_classes, :objc_protocols, :objc_categories, :global_values, :global_value_enums, :global_value_dictionaries, :constant_values, :structs, :enums, :cfenums,
-                      :cfoptions, :conf_functions, :conf_values, :conf_constants, :conf_classes, :conf_protocols, :conf_categories, :conf_enums, :macroses
+                      :cfoptions, :conf_functions, :conf_values, :conf_constants, :conf_classes, :conf_protocols, :conf_categories, :conf_enums
         def initialize(conf)
             @conf = conf
             @conf_typedefs = @conf['typedefs'] || {}
@@ -1697,49 +1605,10 @@ module Bro
             @cfenums = [] # CF_ENUM(..., name) locations
             @cfoptions = [] # CF_OPTIONS(..., name) locations
             @type_cache = {}
-            @macroses = {}
         end
 
         def inspect
             object_id
-        end
-
-        def expand_macro(source)
-            source = source.split(/\s*\\*\s*\n/).join(" ")
-            # name
-            name = source[/^[A-Za-z_][A-Za-z_0-9]*/]
-            # find macro
-            m = @macroses[name]
-            return source unless m
-
-            # remove name
-            s = source.gsub(/^[A-Za-z_][A-Za-z_0-9]*/, '').strip
-            # check if there is a params
-            if s.start_with?("(")
-                # use list of params
-                params = s[/^\(.*?\)/][1..-2]
-                args = params.scan /(?:"(?:""|.)*?"(?!")|[^,]*?\(.*?\)|[^,]+)/
-                args = args.collect{|x| x.strip || x}
-            else
-                args = []
-            end
-
-            # to replace them in macro
-            res = m.subst(args)
-            return source unless res
-            res = res.gsub('__IPHONE_', '') # todo: experimental
-            # puts "expanded: #{source} ---> #{res}"
-            res
-        end
-
-        # performs macro-expansion for attribute if it is required (if inital pass didn't give any data )
-        def expand_attribute_if_needed(attribute, cursor)
-            if attribute.is_a?(AvailableAttribute) && attribute.empty?
-                s = expand_macro(cursor.extent.text)
-                expanded_attribute = AvailableAttribute.new(s)
-                attribute = expanded_attribute unless expanded_attribute.empty?
-            end
-            return attribute
         end
 
         def resolve_type_by_name(name)
@@ -1943,7 +1812,7 @@ module Bro
                 begin
                     ret_type = resolve_type(type.pointee.result_type)
                     param_types = (0..type.pointee.num_arg_types-1).map { |idx| resolve_type(type.pointee.arg_type(idx))}
-                    Block.new(ret_type, param_types)
+                    Block.new(self, ret_type, param_types)
                 rescue => e
                     $stderr.puts "WARN: Unknown block type #{name}. Using ObjCBlock. Failed to convert due: #{e}"
                     Bro.builtins_by_type_kind(type.kind)
@@ -2021,8 +1890,12 @@ module Bro
             get_conf_for_key(name, @conf_enums)
         end
 
+        def is_byval_type?(type)
+            type.is_a?(Struct) || type.is_a?(Typedef) && (type.is_struct? || type.typedef_type.kind == :type_record)
+        end
+
         def to_java_type(type)
-            if type.is_a?(Struct) || type.is_a?(Typedef) && (type.is_struct? || type.typedef_type.kind == :type_record)
+            if is_byval_type?(type)
                 "@ByVal #{type.java_name}"
             elsif type.is_a?(Array)
                 "@Array({#{type.dimensions.join(', ')}}) #{type.java_name}"
@@ -2141,9 +2014,6 @@ module Bro
                             v = @constant_values.find { |e| e.name == src }
                             if v
                                 @constant_values.push ConstantValue.new self, cursor, v.value, v.type
-                            else
-                                # puts "Adding macro #{cursor.extent.text}"
-                                @macroses[name] = Macro.new cursor.extent.text unless @macroses[name]
                             end
                         end
                     end
@@ -2755,12 +2625,24 @@ def clang_preprocess(header, args)
     at_exit { FileUtils.remove_entry(tmp_dir)}
     main_file = nil
 
-    lines = IO.popen(['clang', header] + args).readlines
+    # prepare MACRO overrides to save NS_OPTIONS macro as it is usefull for
+    # generating BIT enums
+    overrides_h = File.join(tmp_dir, '__overrides.h')
+    File.open(overrides_h, 'w') do |f|
+        f.puts "#import <Foundation/NSObjCRuntime.h>"
+        f.puts "#undef NS_OPTIONS"
+        f.puts "#undef CF_OPTIONS"
+        f.puts "#import \"#{header}\""
+    end
+
+    lines = IO.popen(['clang', overrides_h] + args).readlines
     lines.each do |line|
         if !line.start_with?('# ')
             # data line
             raise "Unexpected data line while includes are empty #{line}" unless include_stack.length
-
+            # skip overrides data
+            next if include_stack.last.name == overrides_h
+            # copy data
             include_stack.last.write_string line
             next
         end
@@ -2803,12 +2685,21 @@ def clang_preprocess(header, args)
     end
 
     main_file = File.expand_path(main_file)
-    return main_file
+
+    #now restore macro just to have them there
+    restores_main_h = File.join(tmp_dir, '__restores.h')
+    File.open(restores_main_h, 'w') do |f|
+        f.puts "#define NS_OPTIONS(_type, _name) enum _name : _type _name; enum _name : _type"
+        f.puts "#define CF_OPTIONS(_type, _name) enum _name : _type _name; enum _name : _type"
+        f.puts "#import \"#{main_file}\""
+    end
+    return restores_main_h
 end
 
 
 $mac_version = nil
 $ios_version = '10.0'
+$target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
 sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS#{$ios_version}.sdk"
 
