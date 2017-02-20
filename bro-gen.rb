@@ -648,7 +648,7 @@ module Bro
             end
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
-                when :cursor_type_ref, :cursor_parm_decl, :cursor_obj_c_class_ref, :cursor_obj_c_protocol_ref, :cursor_obj_c_instance_method_decl, :cursor_iboutlet_attr, :cursor_annotate_attr, :cursor_unexposed_expr
+                when :cursor_type_ref, :cursor_parm_decl, :cursor_obj_c_class_ref, :cursor_obj_c_protocol_ref, :cursor_obj_c_instance_method_decl, :cursor_iboutlet_attr, :cursor_annotate_attr, :cursor_unexposed_expr, 417
                 # Ignored
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
@@ -1496,6 +1496,8 @@ module Bro
             @enum_conf = nil
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
+                when 409, 417
+                # Ignored
                 when :cursor_enum_constant_decl
                     values.push EnumValue.new model, cursor, self
                 when :cursor_unexposed_attr
@@ -1557,7 +1559,8 @@ module Bro
         end
         alias super_name name
         def name
-            n = ((@model.conf_enums.find { |_k, v| v['first'] == values.first.name }) || [nil]).first
+            n = nil
+            n = ((@model.conf_enums.find { |_k, v| v['first'] == values.first.name }) || [nil]).first if values.length > 0
             unless n
                 if @model.cfenums.include?(@id) || @model.cfoptions.include?(@id)
                     # This is a CF_ENUM or CF_OPTIONS. Find the typedef with the same location and use its name.
@@ -1749,6 +1752,7 @@ module Bro
                 e
             elsif type.kind == :type_unexposed
                 e = @structs.find { |e| e.name == name }
+                e ||= @enums.find { |e| e.name == name || e.super_name == name }
                 unless e
                     if name.end_with?('[]')
                         # type is an unbounded array (void *[]). libclang does not expose info on such types.
@@ -1785,7 +1789,9 @@ module Bro
                             Bro.builtins_by_name(name)
                         end
                     else
-                        if td.is_callback? || td.is_struct? || td.is_enum?
+                        if td.typedef_type.kind == :type_block_pointer
+                            resolve_type(td.typedef_type)
+                        elsif td.is_callback? || td.is_struct? || td.is_enum?
                             td
                         elsif get_class_conf(td.name)
                             td
@@ -2632,10 +2638,9 @@ def clang_preprocess(header, args)
         f.puts "#import <Foundation/NSObjCRuntime.h>"
         f.puts "#undef NS_OPTIONS"
         f.puts "#undef CF_OPTIONS"
-        f.puts "#import \"#{header}\""
     end
 
-    lines = IO.popen(['clang', overrides_h] + args).readlines
+    lines = IO.popen(['clang', header, '-include', overrides_h] + args).readlines
     lines.each do |line|
         if !line.start_with?('# ')
             # data line
