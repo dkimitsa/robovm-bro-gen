@@ -375,7 +375,11 @@ module Bro
 
     def self.parse_attribute(cursor)
         source = Bro.read_source_range(cursor.extent)
-        if source.start_with?('__DARWIN_ALIAS_C') || source.start_with?('__DARWIN_ALIAS') ||
+        if source.start_with?('availability(')
+            return AvailableAttribute.new source
+        elsif source.start_with?('unavailable')
+            return UnavailableAttribute.new source
+        elsif source.start_with?('__DARWIN_ALIAS_C') || source.start_with?('__DARWIN_ALIAS') ||
            source == 'CF_IMPLICIT_BRIDGING_ENABLED' || source.start_with?('DISPATCH_') || source.match(/^(CF|NS)_RETURNS_RETAINED/) ||
            source.match(/^(CF|NS)_INLINE$/) || source.match(/^(CF|NS)_FORMAT_FUNCTION.*/) || source.match(/^(CF|NS)_FORMAT_ARGUMENT.*/) ||
            source == 'NS_RETURNS_INNER_POINTER' || source == 'NS_AUTOMATED_REFCOUNT_WEAK_UNAVAILABLE' || source == 'NS_REQUIRES_NIL_TERMINATION' ||
@@ -383,12 +387,9 @@ module Bro
            source.end_with?('_CLASS_EXPORT') || source.end_with?('_EXPORT') || source == 'NS_REPLACES_RECEIVER' || source == '__objc_exception__' || source == 'OBJC_EXPORT' ||
            source == 'OBJC_ROOT_CLASS' || source == '__ai' || source.end_with?('_EXTERN_WEAK') || source == 'NS_DESIGNATED_INITIALIZER' || source.start_with?('NS_EXTENSION_UNAVAILABLE_IOS') ||
            source == 'NS_REQUIRES_PROPERTY_DEFINITIONS' || source.start_with?('DEPRECATED_MSG_ATTRIBUTE') || source == 'NS_REFINED_FOR_SWIFT' || source.start_with?('NS_SWIFT_NAME') ||
-           source.start_with?('NS_SWIFT_UNAVAILABLE') || source == 'UI_APPEARANCE_SELECTOR' || source == 'CF_RETURNS_NOT_RETAINED' || source == 'NS_REQUIRES_SUPER' || source == 'objc_designated_initializer'
-            return IgnoredAttribute.new source
-        elsif source.start_with?('availability(')
-            return AvailableAttribute.new source
-        elsif source.start_with?('unavailable')
-            return UnavailableAttribute.new source
+           source.start_with?('NS_SWIFT_UNAVAILABLE') || source == 'UI_APPEARANCE_SELECTOR' || source == 'CF_RETURNS_NOT_RETAINED' || source == 'NS_REQUIRES_SUPER' || source == 'objc_designated_initializer' ||
+           source == 'availability' # clang extends property to methods and attaches this attr without proper specification, ignore it
+            return IgnoredAttribute.new source # TODO: lot of these macro are not present anymore as were expanded by pre-clang preprocessor call 
         else
             return UnsupportedAttribute.new source
         end
