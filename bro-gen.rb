@@ -719,8 +719,11 @@ module Bro
             @protocols = []
             @instance_vars = []
             @class_vars = []
-            @opaque = false
             @def_constructor = true
+            if cursor.kind == :cursor_obj_c_class_ref
+                @opaque = true
+                return
+            end
 
             generic_fix = false
 
@@ -780,8 +783,13 @@ module Bro
         def initialize(model, cursor)
             super(model, cursor)
             @protocols = []
-            @opaque = false
             @owner = nil
+            if cursor.kind == :cursor_obj_c_protocol_ref
+                @opaque = true
+                return
+            end
+
+            @opaque = false
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
                 when :cursor_unexposed_expr, 417
@@ -1824,6 +1832,15 @@ module Bro
                     $stderr.puts "WARN: Unknown block type #{name}. Using ObjCBlock. Failed to convert due: #{e}"
                     Bro.builtins_by_type_kind(type.kind)
                 end
+            elsif type.kind == 119 # CXType_Elaborated
+                if name.start_with?('struct ')
+                    name = v.sub('struct ', '')
+                elsif name.start_with?('class ')
+                    name = v.sub('class ', '')
+                else
+                    $stderr.puts "WARN: Unknown elaborated type #{name}"
+                end
+                resolve_type_by_name name
             else
                 # Could still be an enum
                 e = @enums.find { |e| e.name == name }
@@ -1944,7 +1961,7 @@ module Bro
                       /^normalizes/, /^notifies/, /^obscures/, /^opens/, /^overrides/, /^pauses/, /^performs/, /^prefers/, /^presents/, /^preserves/, /^propagates/,
                       /^provides/, /^reads/, /^receives/, /^recognizes/, /^remembers/, /^removes/, /^requests/, /^requires/, /^resets/, /^resumes/, /^returns/, /^reverses/,
                       /^scrolls/, /^searches/, /^sends/, /^shows/, /^simulates/, /^sorts/, /^supports/, /^suppresses/, /^tracks/, /^translates/, /^uses/, /^wants/, /^writes/,
-                      /^preloads/
+                      /^preloads/, /^may\p{Lu}/
                         getter = name
                     else
                         getter = "is#{base}"
@@ -2070,7 +2087,13 @@ module Bro
                 when :cursor_obj_c_interface_decl
                     @objc_classes.push ObjCClass.new self, cursor
                     next :continue
+                when :cursor_obj_c_class_ref
+                    @objc_classes.push ObjCClass.new self, cursor
+                    next :continue
                 when :cursor_obj_c_protocol_decl
+                    @objc_protocols.push ObjCProtocol.new self, cursor
+                    next :continue
+                when :cursor_obj_c_protocol_ref
                     @objc_protocols.push ObjCProtocol.new self, cursor
                     next :continue
                 when :cursor_obj_c_category_decl
@@ -2704,7 +2727,7 @@ end
 
 
 $mac_version = nil
-$ios_version = '10.0'
+$ios_version = '10.3'
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
 sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS#{$ios_version}.sdk"
@@ -3422,6 +3445,10 @@ ARGV[1..-1].each do |yaml_file|
 
     model.objc_classes.find_all { |cls| !cls.is_opaque? } .each do |cls|
         c = model.get_class_conf(cls.name)
+        if !c  && model.is_included?(cls) && cls.is_available? && !cls.is_outdated?
+            $stderr.puts "CONV: missing class #{cls.java_name}"
+        end
+
         next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
         name = c['name'] || cls.java_name
         data = template_datas[name] || {}
@@ -3439,6 +3466,9 @@ ARGV[1..-1].each do |yaml_file|
 
     model.objc_protocols.each do |prot|
         c = model.get_protocol_conf(prot.name)
+        if !c  &&  model.is_included?(prot) && !prot.is_outdated?
+            $stderr.puts "CONV: missing protocol #{prot.java_name}"
+        end
         next unless c && !c['exclude'] && !prot.is_outdated?
         name = c['name'] || prot.java_name
         data = template_datas[name] || {}
