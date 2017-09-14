@@ -225,7 +225,12 @@ module Bro
 
         @@simple_block_types = {'boolean' => 'Boolean', 'byte' => 'Byte',
             'short' => 'Short', 'char' => 'Character', 'int' => 'Integer',
-            'long' => 'Long', 'float' => 'Float', 'double' => 'Double'}
+            'long' => 'Long', 'float' => 'Float', 'double' => 'Double',
+            # and also annotated types
+            '@MachineSizedUInt long' => 'Long','@MachineSizedSInt long' => 'Long',
+            '@MachineSizedFloat double' => 'Double'}
+        @@simple_block_types_anotat = {'@MachineSizedUInt long' => '@MachineSizedUInt',
+            '@MachineSizedSInt long' => '@MachineSizedSInt', '@MachineSizedFloat double' => '@MachineSizedFloat'}
         def java_name
             if @return_type.is_a?(Builtin) && @return_type.name == 'void'
                 if @param_types.empty?
@@ -244,10 +249,20 @@ module Bro
                 if @param_types.size == 0 && @return_type.is_a?(Builtin) && @@simple_block_types[@return_type.name]
                     "@Block #{@param_types[0].name.capitalize}Block"
                 elsif @param_types.size <= 6
-                    by_val_params = @param_types.map { |e| @model.is_byval_type?(e) ? '@ByVal' : '' }.join(",")
+                    # besides @ByVal it would be required to replace @MachineSized anotated
+                    # types with proper types and add these annotations to by_val_params
+                    by_val_params = @param_types.map {|e|
+                        if @model.is_byval_type?(e)
+                            '@ByVal'
+                        elsif e.is_a?(Builtin)
+                            @@simple_block_types_anotat[e.java_name] || ''
+                        else
+                            ''
+                        end
+                    }.join(",")
                     by_val_mark = ''
                     by_val_mark = "(\"(#{by_val_params})\")" if !by_val_params.gsub(',', '').empty?
-                    "@Block#{by_val_mark} Block#{@param_types.size}<" + @param_types.map { |e| e.java_name }.push(to_java_name(return_type)).join(", ") + ">"
+                    "@Block#{by_val_mark} Block#{@param_types.size}<" + @param_types.map { |e| to_java_name(e) }.push(to_java_name(return_type)).join(", ") + ">"
                 else
                     'ObjCBlock'
                 end
@@ -389,7 +404,7 @@ module Bro
            source == 'NS_REQUIRES_PROPERTY_DEFINITIONS' || source.start_with?('DEPRECATED_MSG_ATTRIBUTE') || source == 'NS_REFINED_FOR_SWIFT' || source.start_with?('NS_SWIFT_NAME') ||
            source.start_with?('NS_SWIFT_UNAVAILABLE') || source == 'UI_APPEARANCE_SELECTOR' || source == 'CF_RETURNS_NOT_RETAINED' || source == 'NS_REQUIRES_SUPER' || source == 'objc_designated_initializer' ||
            source == 'availability' # clang extends property to methods and attaches this attr without proper specification, ignore it
-            return IgnoredAttribute.new source # TODO: lot of these macro are not present anymore as were expanded by pre-clang preprocessor call 
+            return IgnoredAttribute.new source # TODO: lot of these macro are not present anymore as were expanded by pre-clang preprocessor call
         else
             return UnsupportedAttribute.new source
         end
