@@ -1,3 +1,0 @@
-[submodule "ffi-clang"]
-	path = ffi-clang
-	url = https://github.com/CoderBaron/ffi-clang
