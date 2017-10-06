@@ -3616,7 +3616,8 @@ ARGV[1..-1].each do |yaml_file|
                 a = method_to_java(model, owner_name, owner, m, c['methods'] || {}, {}, true)
                 methods_lines.concat(a[0])
             end
-            members.find_all { |m| m.is_a?(Bro::ObjCProperty) && m.is_available? }.each do |p|
+            # TODO: temporaly don't add static properties to interfaces
+            members.find_all { |m| m.is_a?(Bro::ObjCProperty) && m.is_available? && !(m.is_static? && owner.is_a?(Bro::ObjCProtocol))}.each do |p|
                 properties_lines.concat(property_to_java(model, owner, p, c['properties'] || {}, {}, true))
             end
         end
@@ -3646,7 +3647,8 @@ ARGV[1..-1].each do |yaml_file|
                 methods_lines.concat(a[0])
                 constructors_lines.concat(a[1])
             end
-            members.find_all { |m| m.is_a?(Bro::ObjCProperty) && m.is_available? }.each do |p|
+            # TODO: temporaly don't add static properties to interfaces
+            members.find_all { |m| m.is_a?(Bro::ObjCProperty) && m.is_available? && !(m.is_static? && owner.is_a?(Bro::ObjCProtocol))}.each do |p|
                 properties_lines.concat(property_to_java(model, owner, p, c['properties'] || {}, seen))
             end
         end
