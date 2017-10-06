@@ -2822,6 +2822,7 @@ def_bits_template = IO.read("#{templates_dir}/bits_template.java")
 def_protocol_template = IO.read("#{templates_dir}/protocol_template.java")
 def_value_enum_template = IO.read("#{templates_dir}/value_enum_template.java")
 def_value_dictionary_template = IO.read("#{templates_dir}/value_dictionary_template.java")
+def_nserror_enum_template = IO.read("#{templates_dir}/nserror_enum_template.java")
 global = YAML.load_file("#{script_dir}/global.yaml")
 
 ARGV[1..-1].each do |yaml_file|
@@ -3005,7 +3006,7 @@ ARGV[1..-1].each do |yaml_file|
             end
             data['imports'] = imports_s
             data['javadoc'] = "\n" + model.push_availability(enum).join("\n") + "\n"
-            data['template'] = bits ? def_bits_template : def_enum_template
+            data['template'] = bits ? def_bits_template : (c['nserror'] = true ? def_nserror_enum_template : def_enum_template)
             template_datas[java_name] = data
         #      merge_template(target_dir, package, java_name, bits ? def_bits_template : def_enum_template, data)
         elsif model.is_included?(enum) && (!c || !c['exclude'])
@@ -3347,7 +3348,7 @@ ARGV[1..-1].each do |yaml_file|
 
                 java_parameters[-1] = "#{error_type}.#{error_type}Ptr error"
                 visibility = 'private'
-              end
+            end
 
             model.push_availability(f, lines)
             lines << annotations.to_s if annotations
