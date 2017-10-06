@@ -232,46 +232,60 @@ module Bro
         @@simple_block_types_anotat = {'@MachineSizedUInt long' => '@MachineSizedUInt',
             '@MachineSizedSInt long' => '@MachineSizedSInt', '@MachineSizedFloat double' => '@MachineSizedFloat'}
         def java_name
+            res = java_name_ex()
+            return res[0] + ' ' + res[1]
+        end
+
+        # modified to return array tuple to be able create block type param inside block
+        def java_name_ex
             if @return_type.is_a?(Builtin) && @return_type.name == 'void'
                 if @param_types.empty?
-                    '@Block Runnable'
+                    ['@Block', 'Runnable']
                 elsif @param_types.size == 1 && @param_types[0].is_a?(Builtin) && @@simple_block_types[@param_types[0].name]
-                    "@Block Void#{@param_types[0].name.capitalize}Block"
+                    ["@Block", "Void#{@param_types[0].name.capitalize}Block"]
                 elsif @param_types.size <= 6
-                    by_val_params = @param_types.map { |e| @model.is_byval_type?(e) ? '@ByVal' : '' }.join(",")
+                    by_val_params = to_by_val_params(@param_types).join(",")
                     by_val_mark = ''
                     by_val_mark = "(\"(#{by_val_params})\")" if !by_val_params.gsub(',', '').empty?
-                    "@Block#{by_val_mark} VoidBlock#{@param_types.size}<" + @param_types.map { |e| to_java_name(e) }.join(", ") + ">"
+                    ["@Block#{by_val_mark}", "VoidBlock#{@param_types.size}<" + @param_types.map { |e| to_java_name(e) }.join(", ") + ">"]
                 else
-                    'ObjCBlock'
+                    ['', 'ObjCBlock']
                 end
             else
                 if @param_types.size == 0 && @return_type.is_a?(Builtin) && @@simple_block_types[@return_type.name]
-                    "@Block #{@param_types[0].name.capitalize}Block"
+                    ["@Block", "#{@param_types[0].name.capitalize}Block"]
                 elsif @param_types.size <= 6
                     # besides @ByVal it would be required to replace @MachineSized anotated
                     # types with proper types and add these annotations to by_val_params
-                    by_val_params = @param_types.map {|e|
-                        if @model.is_byval_type?(e)
-                            '@ByVal'
-                        elsif e.is_a?(Builtin)
-                            @@simple_block_types_anotat[e.java_name] || ''
-                        else
-                            ''
-                        end
-                    }.join(",")
+                    by_val_params = to_by_val_params(@param_types).join(",")
                     by_val_mark = ''
                     by_val_mark = "(\"(#{by_val_params})\")" if !by_val_params.gsub(',', '').empty?
-                    "@Block#{by_val_mark} Block#{@param_types.size}<" + @param_types.map { |e| to_java_name(e) }.push(to_java_name(return_type)).join(", ") + ">"
+                    ["@Block#{by_val_mark}", "Block#{@param_types.size}<" + @param_types.map { |e| to_java_name(e) }.push(to_java_name(return_type)).join(", ") + ">"]
                 else
-                    'ObjCBlock'
+                    ['', 'ObjCBlock']
                 end
             end
         end
 
+        def to_by_val_params(p_types)
+            p_types.map {|e|
+                if @model.is_byval_type?(e)
+                    '@ByVal'
+                elsif e.is_a?(Block)
+                    '@Block'
+                elsif e.is_a?(Builtin)
+                    @@simple_block_types_anotat[e.java_name] || ''
+                else
+                    ''
+                end
+            }
+        end
+
         def to_java_name(type)
             if type.respond_to?('each') # Generic type
-                "#{type[0].java_name}<#{type[1].java_name}>"
+                "#{type[0].java_name}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
+            elsif type.is_a?(Block)
+                type.java_name_ex()[1]
             else
                 @@simple_block_types[type.java_name] || type.java_name
             end
