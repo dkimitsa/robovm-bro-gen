@@ -2390,7 +2390,12 @@ end
 def property_to_java(model, owner, prop, props_conf, seen, adapter = false)
     return [] if prop.is_outdated?
 
-    conf = model.get_conf_for_key(prop.name, props_conf) || {}
+    # if static -- try to get configuration for it
+    conf = prop.is_static? ? model.get_conf_for_key("+" + prop.name, props_conf) : nil
+    # sanity check for regexp, as + can get into name, just for compatibility mode
+    conf = nil if conf && ((!conf['getter'].nil? && conf['getter'].start_with?('+')) || (!conf['setter'].nil? && conf['setter'].start_with?('+')) || (!conf['name'].nil? && conf['name'].start_with?('+')))
+    # if not found try to look for regural one (comp mode)
+    conf ||= model.get_conf_for_key(prop.name, props_conf) || {}
 
     if !conf['exclude']
         name = conf['name'] || prop.name
@@ -2441,7 +2446,8 @@ def property_to_java(model, owner, prop, props_conf, seen, adapter = false)
         annotations = conf['annotations'] && !conf['annotations'].empty? ? conf['annotations'].uniq.join(' ') : nil
 
         lines = []
-        unless seen["-#{prop.getter_name}"]
+        seen_prefix = !static.empty? ? '+' : '-'
+        unless seen["#{seen_prefix}#{prop.getter_name}"]
             model.push_availability(prop, lines)
             lines << annotations.to_s if annotations
 
@@ -2451,10 +2457,10 @@ def property_to_java(model, owner, prop, props_conf, seen, adapter = false)
                          "@Property(selector = \"#{prop.getter_name}\")"
                      end
             lines << "#{[visibility, static, native, marshaler, generics_s, type[0], getter].find_all { |e| !e.empty? }.join(' ')}(#{parameters_s})#{body}"
-            seen["-#{prop.getter_name}"] = true
+            seen["#{seen_prefix}#{prop.getter_name}"] = true
         end
 
-        if !prop.is_readonly? && !conf['readonly'] && !seen["-#{prop.setter_name}"]
+        if !prop.is_readonly? && !conf['readonly'] && !seen["#{seen_prefix}#{prop.setter_name}"]
             param_types.push([type[0], nil, 'v'])
             parameters_s = param_types.map { |p| "#{p[0]} #{p[2]}" }.join(', ')
             model.push_availability(prop, lines)
@@ -2475,7 +2481,7 @@ def property_to_java(model, owner, prop, props_conf, seen, adapter = false)
             marshaler = marshaler + ' ' if marshaler != ''
 
             lines << "#{[visibility, static, native, generics_s, 'void', setter].find_all { |e| !e.empty? }.join(' ')}(#{marshaler}#{parameters_s})#{body}"
-            seen["-#{prop.setter_name}"] = true
+            seen["#{seen_prefix}#{prop.setter_name}"] = true
         end
         lines
     else
