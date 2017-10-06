@@ -2512,6 +2512,9 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
         $stderr.puts "WARN: Ignoring variadic method '#{owner.name}.#{method.name}(#{param_types.join(', ')})' at #{Bro.location_to_s(method.location)}"
         [[], []]
     elsif !conf['exclude']
+        # is used to produce hints for faster yaml file contructinon
+        suggestion_data = nil
+
         ret_type = get_generic_type(model, owner, method, method.return_type, 0, conf['return_type'])
         params_conf = conf['parameters'] || {}
         param_types = method.parameters.each_with_object([]) do |p, l|
@@ -2528,6 +2531,9 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
                 name = method.name[0..-2]
             else
                 name = method.name.tr(':', '$')
+                # report this case in suggestion_data to point dev that this method
+                # will receive $$ in the name
+                suggestion_data = [full_name, name] if !conf['trim_after_first_colon'] && name.count('$') > 0
             end
             if method.parameters.empty? && method.return_type.kind != :type_void && conf['property']
                 base = name[0, 1].upcase + name[1..-1]
@@ -2949,6 +2955,21 @@ ARGV[1..-1].each do |yaml_file|
     # attributes and enum/types definitions
     main_file = clang_preprocess(File.join(header_root, headers[0]), clang_preprocess_args)
 
+    # START of potential support code block
+    # this map will contain all potential entries that are missing (such as class is not covered in yaml)
+    # or has be updated (such as method name generated with $$$)
+    $potential_new_entries = {}
+    def add_potential_new_entry(entry, data)
+        exists = $potential_new_entries.key?(entry)
+        bundle = exists ? $potential_new_entries[entry] : nil
+        if data
+            bundle ||= []
+            bundle.push(data)
+        end
+        $potential_new_entries[entry] = bundle if !exists
+    end
+    # END of potential support code block
+
     # now translate pre-processed
     translation_unit = index.parse_translation_unit(main_file, clang_args, [], detailed_preprocessing_record: true)
 
@@ -3010,6 +3031,9 @@ ARGV[1..-1].each do |yaml_file|
             template_datas[java_name] = data
         #      merge_template(target_dir, package, java_name, bits ? def_bits_template : def_enum_template, data)
         elsif model.is_included?(enum) && (!c || !c['exclude'])
+            # save to potential new entry
+            add_potential_new_entry(enum, nil)
+
             # Possibly an enum with values that should be turned into constants
             potential_constant_enums.push(enum)
             $stderr.puts "WARN: Turning the enum #{enum.name} with first value #{enum.values[0].name} into constants" unless enum.name == ''
@@ -3018,6 +3042,9 @@ ARGV[1..-1].each do |yaml_file|
 
     model.structs.find_all { |e| !e.name.empty? }.each do |struct|
         c = model.get_class_conf(struct.name)
+        # save to potential new entry
+        add_potential_new_entry(struct, nil) if !c && model.is_included?(struct) && !struct.is_outdated?
+
         if c && !c['exclude'] && !struct.is_outdated?
             name = c['name'] || struct.name
             template_datas[name] = struct.is_opaque? ? opaque_to_java(model, {}, name, c) : struct_to_java(model, {}, name, struct, c)
@@ -3412,6 +3439,9 @@ ARGV[1..-1].each do |yaml_file|
     members = {}
     (model.objc_classes + model.objc_protocols).each do |cls|
         c = cls.is_a?(Bro::ObjCClass) ? model.get_class_conf(cls.name) : model.get_protocol_conf(cls.name)
+        # before skipping check if this is potentialy missing class or protocol from yaml file
+        add_potential_new_entry(cls, nil) if !c && cls.is_available? && !cls.is_opaque? && !cls.is_outdated? && model.is_included?(cls)
+
         next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
         owner = c['name'] || cls.java_name
         members[owner] = members[owner] || { owner: cls, owner_name: owner, members: [], conf: c }
@@ -3646,6 +3676,12 @@ ARGV[1..-1].each do |yaml_file|
                 a = method_to_java(model, owner_name, owner, m, c['methods'] || {}, seen)
                 methods_lines.concat(a[0])
                 constructors_lines.concat(a[1])
+
+                # add potential information about method if it has more than
+                # one argument and it is name is not overridden in yaml.
+                # which will lead to $ signs in name so this will cost another
+                # run of bro-gen with updated yaml file.
+                add_potential_new_entry(owner, a[2]) if a.length > 2 && a[2] != nil && a[2].length > 0
             end
             # TODO: temporaly don't add static properties to interfaces
             members.find_all { |m| m.is_a?(Bro::ObjCProperty) && m.is_available? && !(m.is_static? && owner.is_a?(Bro::ObjCProtocol))}.each do |p|
@@ -3704,4 +3740,95 @@ ARGV[1..-1].each do |yaml_file|
         end
         merge_template(target_dir, package, owner, data['template'] || def_class_template, data)
     end
+
+    #
+    # dump suggestions for potentialy new classes/enum/protocols
+    if !$potential_new_entries.empty?
+      puts "\n\n\n"
+      puts "\# YAML file pottentialy missing entries suggestions\n"
+      puts "\n\n\n"
+
+      # dumping enums
+      potential_enums = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Enum ) || key.is_a?(Bro::EnumValue)  }
+      if !potential_enums.empty?
+          puts "#enums:"
+          puts "\# potentialy missing enums"
+          puts "#enums:"
+          potential_enums.each do |enum, data|
+
+              enum_params = []
+              enum_comments = []
+              enum_members = enum.values.collect {|e| e.name}
+              enum_comments.push( "since #{enum.since}" ) if enum.since
+
+              # get common prefix
+              if !enum_members.empty?
+                  enum_members.push(enum.name) if enum_members.length == 1 && !enum.name.empty?
+                  if enum_members.length == 1
+                      prefix = enum_members[0]
+                      enum_comments.push("!Prefix invalid!")
+                  else
+                      min, max = enum_members.minmax
+                      idx = min.size.times{|i| break i if min[i] != max[i]}
+                      prefix = min[0...idx]
+                  end
+                  prefix = "" if !enum.name.empty? && prefix.start_with?(enum.name)
+                  enum_params.push("prefix: #{prefix}") if !prefix.empty?
+              end
+
+              enum_params.push("first: #{enum_members[0]}") if enum.name.empty?
+              enum_params = "{" + enum_params.join(", ") + "}"
+              enum_comments = enum_comments.empty? ? "" : " \#" + enum_comments.join(", ")
+              puts "    #{enum.name.empty? ? 'UNNAMED' : enum.name}: #{enum_params}#{enum_comments}"
+          end
+          puts "\n\n\n"
+      end
+
+      # dumping structs
+      potential_structs = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Struct) }
+      if !potential_structs.empty?
+          puts "\# potentialy missing structs"
+          potential_structs.each do |struct, data|
+              puts "    #{struct.name}: {}" + (struct.since  ? " \#since #{struct.since}" : "")
+          end
+          puts "\n\n\n"
+      end
+
+      # dumping classes and protocols
+      potential_classes_protos = [
+          ["classes", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCClass)}],
+          ["protocols", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCProtocol)}]
+      ]
+      potential_classes_protos.each do |title, entries|
+          next if entries.empty?
+
+          # convert to array and sort to have values to be updated first
+          puts "\# #{title} to be updated:"
+          puts "#{title}:"
+          entries.each do |cls, data|
+              # find all method information
+              bad_methods = data
+              if bad_methods == nil
+                  # it is a new class/proto and information about it has to be extracted
+                  (cls.instance_methods + cls.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
+                      next unless m.name.count(':') > 1
+                      bad_methods ||= []
+                      full_name = (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
+                      bad_methods.push([full_name, m.name.tr(':', '$')])
+                  end
+              end
+
+              puts "    #{cls.name}:" + (!bad_methods ? " {}" : "") + (cls.since  ? " \#since #{cls.since}" : "")
+              next unless bad_methods
+              puts "        methods:"
+              bad_methods.each do |full_name, name|
+                  puts "            '#{full_name}':"
+                  puts "                \#trim_after_first_colon: true"
+                  puts "                name: #{name}"
+              end
+          end
+          puts "\n\n\n"
+      end
+    end
+    # end of dumping suggestions
 end
