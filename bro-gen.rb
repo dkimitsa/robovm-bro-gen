@@ -2585,6 +2585,9 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
 
         annotations = conf['annotations'] && !conf['annotations'].empty? ? conf['annotations'].uniq.join(' ') : nil
         static_constructor = !conf['constructor'].nil? && conf['constructor'] == true && is_static
+        # introduced constructor wrapper to be able solve cases when there are two init* mathods with same arguments
+        # which makes impossible to create two constructors in java
+        static_constructor_name = is_static ? nil : conf['static_constructor_name']
 
         if conf['throws']
             error_type = 'NSError'
@@ -2601,7 +2604,7 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
             end
             params_s = params.length.zero? ? 'ptr' : "#{params.join(', ')}, ptr"
 
-            unless owner.is_a?(Bro::ObjCClass) && is_init?(owner, method) || static_constructor
+            unless owner.is_a?(Bro::ObjCProtocol) || owner.is_a?(Bro::ObjCClass) && is_init?(owner, method) || static_constructor
                 model.push_availability(method, method_lines)
 
                 method_lines << annotations.to_s if annotations
@@ -2613,12 +2616,12 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
                 method_lines << "   if (ptr.get() != null) { throw new #{conf['throws']}(ptr.get()); }"
                 method_lines << '   return result;' unless ret == ''
                 method_lines << '}'
-              end
+            end
 
-            visibility = 'private'
+            visibility = 'private' unless owner.is_a?(Bro::ObjCProtocol)
         end
 
-        if (is_static && static_constructor)
+        if ((is_static && static_constructor) || (is_init?(owner, method) && !static_constructor_name.nil?))
             ret_type[0] = "@Pointer long"
             visibility = 'protected'
         end
@@ -2645,7 +2648,25 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
             model.push_availability(method, constructor_lines)
             constructor_lines << annotations.to_s if annotations
 
-            if (is_init?(owner, method))
+            if is_init?(owner, method) && !static_constructor_name.nil?
+                # creating static wrapper to call corresponding init
+                constructor_lines << "@Method(selector = \"#{method.name}\")"
+                if conf['throws']
+                    constructor_lines << "#{constructor_visibility} static #{generics_s.size>0 ? ' ' + generics_s : ''} #{owner_name} #{static_constructor_name}(#{new_parameters_s}) throws #{conf['throws']}  {"
+                    constructor_lines << "   #{owner_name} res = new #{owner_name}((SkipInit) null);"
+                    constructor_lines << "   #{error_type}.#{error_type}Ptr ptr = new #{error_type}.#{error_type}Ptr();"
+                    constructor_lines << "   res.initObject(res.#{name}(#{params_s}));"
+                    constructor_lines << "   if (ptr.get() != null) { throw new #{conf['throws']}(ptr.get()); }"
+                    constructor_lines << "   return res;"
+                    constructor_lines << "}"
+                else
+                    constructor_lines << "#{constructor_visibility} static #{generics_s.size>0 ? ' ' + generics_s : ''} #{owner_name} #{static_constructor_name}(#{parameters_s}) {"
+                    constructor_lines << "   #{owner_name} res = new #{owner_name}((SkipInit) null);"
+                    constructor_lines << "   res.initObject(res.#{name}(#{args_s}));"
+                    constructor_lines << "   return res;"
+                    constructor_lines << "}"
+                end
+            elsif is_init?(owner, method)
                 constructor_lines << "@Method(selector = \"#{method.name}\")"
                 if conf['throws']
                     constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{new_parameters_s}) throws #{conf['throws']} {"
@@ -2783,7 +2804,7 @@ end
 
 
 $mac_version = nil
-$ios_version = '10.3'
+$ios_version = '11.0'
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
 sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS#{$ios_version}.sdk"
