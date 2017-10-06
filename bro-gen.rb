@@ -3516,6 +3516,23 @@ ARGV[1..-1].each do |yaml_file|
         l
     end
 
+    # list all protocols including inherited ones. it is needed to create adapter in case there is several parent protocols
+    def protocol_list_deep(model, protocols, conf, l = [])
+        if conf['protocols']
+            l += conf['protocols']
+        else
+            protocols.each do |name|
+                c = model.get_protocol_conf(name)
+                next unless c
+                pr = model.objc_protocols.find { |p| p.name == name }
+                next if !pr || l.include?(pr.java_name)
+                l.push(pr.java_name)
+                protocol_list_deep(model, pr.protocols, c, l)
+            end
+        end
+        l
+    end
+
     def protocol_list_s(model, keyword, protocols, conf)
         l = protocol_list(model, protocols, conf)
         l.empty? ? nil : (keyword + ' ' + l.join(', '))
@@ -3577,7 +3594,24 @@ ARGV[1..-1].each do |yaml_file|
         owner_name = interface_name + 'Adapter'
         methods_lines = []
         properties_lines = []
-        h[:members].each do |(members, c)|
+
+        # in case there is more than one protocol being inherited this addapter can't
+        # inherit other arapters but has to implement all methods of all protocols it inherits
+        prot_members = h[:members]
+        protocols = protocol_list(model, owner.protocols, c).find_all { |e| e != 'NSObjectProtocol' }
+        if protocols.length > 1
+            protocols_methods = []
+            protocols_deep = protocol_list_deep(model, owner.protocols, c).find_all { |e| e != 'NSObjectProtocol' }
+            protocols_deep[1..-1].each do |name|
+                protc = model.get_protocol_conf(name)
+                prot = model.objc_protocols.find { |p| p.name == name } if protc
+                protocols_methods.push([prot.instance_methods + prot.class_methods + prot.properties, protc]) if prot && protc
+            end
+            prot_members = prot_members + protocols_methods
+        end
+
+
+        prot_members.each do |(members, c)|
             members.find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
                 a = method_to_java(model, owner_name, owner, m, c['methods'] || {}, {}, true)
                 methods_lines.concat(a[0])
@@ -3589,7 +3623,6 @@ ARGV[1..-1].each do |yaml_file|
 
         data = template_datas[owner_name] || {}
         data['name'] = owner_name
-        protocols = protocol_list(model, owner.protocols, c).find_all { |e| e != 'NSObjectProtocol' }
         data['extends'] = protocols.empty? ? 'NSObject' : "#{protocols[0]}Adapter"
         data['implements'] = "implements #{interface_name}"
         methods_s = methods_lines.flatten.join("\n    ")
