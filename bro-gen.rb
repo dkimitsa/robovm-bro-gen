@@ -2703,7 +2703,7 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
             end
         end
         seen[full_name] = true
-        [method_lines, constructor_lines]
+        [method_lines, constructor_lines, suggestion_data]
     else
         [[], []]
     end
