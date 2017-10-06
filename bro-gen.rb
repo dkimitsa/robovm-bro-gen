@@ -1756,15 +1756,29 @@ module Bro
                     type_name = $1
                     generic_name = $2.tr('* ', '').sub(/__kindof/, '').sub(/id<(.*)>/, '\1')
 
-                    resolve_generic = ['NSString', 'NSCopying', 'NSObject', 'KeyType', 'ObjectType', 'Class', ',', '<', '>'].all? { |n| !generic_name.include? n }
-
                     e = resolve_type_by_name(type_name)
-                    generic_type = resolve_type_by_name(generic_name) if resolve_generic
+                    valid_generics = false
+                    if e && e.pointer
+                        # work with generics
+                        generics = generic_name.split(',')
+                        generic_types = []
+                        generics.each do |g|
+                            valid_generics = ['NSCopying', 'KeyType', 'ObjectType', 'Class', '<', '>'].all? { |n| !g.include? n }
+                            break unless valid_generics
 
-                    resolve_generic &= generic_type.is_a?(ObjCClass) || generic_type.is_a?(Typedef) || generic_type.is_a?(Builtin) # TODO support categories
+                            if (g == 'id' || g == "NSObject")
+                                generic_types.push(Builtin.new("?"))
+                            else
+                                gtype = resolve_type_by_name(g)
+                                valid_generics &= gtype.is_a?(ObjCClass) || gtype.is_a?(Typedef) || gtype.is_a?(Builtin)
+                                break unless valid_generics
+                                generic_types.push(gtype)
+                            end
+                        end
+                    end
 
-                    if resolve_generic && generic_type && e && e.pointer
-                        [e, generic_type]
+                    if valid_generics
+                        [e] + generic_types
                     else
                         if @conf_typedefs[gen_name]
                             resolve_type_by_name gen_name
@@ -1960,7 +1974,7 @@ module Bro
             elsif type.is_a?(Array)
                 "@Array({#{type.dimensions.join(', ')}}) #{type.java_name}"
             elsif type.respond_to?('each') # Generic type
-                "#{type[0].java_name}<#{type[1].java_name}>"
+                "#{type[0].java_name}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
             else
                 type.java_name
              end
