@@ -253,7 +253,7 @@ module Bro
                 end
             else
                 if @param_types.size == 0 && @return_type.is_a?(Builtin) && @@simple_block_types[@return_type.name]
-                    ["@Block", "#{@param_types[0].name.capitalize}Block"]
+                    ["@Block", "#{@return_type.name.capitalize}Block"]
                 elsif @param_types.size <= 6
                     # besides @ByVal it would be required to replace @MachineSized anotated
                     # types with proper types and add these annotations to by_val_params
