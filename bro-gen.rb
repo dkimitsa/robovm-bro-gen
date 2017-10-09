@@ -3052,11 +3052,16 @@ ARGV[1..-1].each do |yaml_file|
     end
     model.typedefs.each do |td|
         c = model.get_class_conf(td.name)
+
+        # save to potential new entry
+        add_potential_new_entry(td, nil) if !c && td.struct && model.is_included?(td) && !td.is_outdated?
+
         next unless c && !c['exclude']
         struct = td.struct
         if struct && struct.is_opaque?
             struct = model.structs.find { |e| e.name == td.struct.name } || td.struct
         end
+
         name = c['name'] || td.name
         template_datas[name] = !struct || struct.is_opaque? ? opaque_to_java(model, {}, name, c) : struct_to_java(model, {}, name, struct, c)
     end
@@ -3790,6 +3795,21 @@ ARGV[1..-1].each do |yaml_file|
           puts "\# potentialy missing structs"
           potential_structs.each do |struct, data|
               puts "    #{struct.name}: {}" + (struct.since  ? " \#since #{struct.since}" : "")
+          end
+          puts "\n\n\n"
+      end
+
+      # duming typedefs as structs        struct = td.struct
+      potential_typedefs = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Typedef) }
+      if !potential_typedefs.empty?
+          puts "\# potentialy missing typedefs"
+          potential_typedefs.each do |td, data|
+              struct = td.struct
+              if struct && struct.is_opaque?
+                  struct = model.structs.find { |e| e.name == td.struct.name } || td.struct
+              end
+              next if !struct || struct.is_opaque?
+              puts "    #{td.name}: {}" + (td.since  ? " \#since #{td.since}" : "")
           end
           puts "\n\n\n"
       end
