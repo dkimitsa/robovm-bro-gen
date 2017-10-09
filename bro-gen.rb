@@ -2628,7 +2628,8 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
         end
 
         if ((is_static && static_constructor) || (is_init?(owner, method) && !static_constructor_name.nil?))
-            ret_type[0] = "@Pointer long"
+            # do not override ret_type if it was customized through config 
+            ret_type[0] = "@Pointer long" unless conf['return_type']
             visibility = 'protected'
         end
 
