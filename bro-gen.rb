@@ -2628,7 +2628,7 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
         end
 
         if ((is_static && static_constructor) || (is_init?(owner, method) && !static_constructor_name.nil?))
-            # do not override ret_type if it was customized through config 
+            # do not override ret_type if it was customized through config
             ret_type[0] = "@Pointer long" unless conf['return_type']
             visibility = 'protected'
         end
@@ -3635,13 +3635,36 @@ ARGV[1..-1].each do |yaml_file|
         # inherit other arapters but has to implement all methods of all protocols it inherits
         prot_members = h[:members]
         protocols = protocol_list(model, owner.protocols, c).find_all { |e| e != 'NSObjectProtocol' }
-        if protocols.length > 1
+        parent_adapter = nil
+        # check for one that is sutable for adapter s
+        protocols.each do |name|
+            # check if there is adapter exists
+            protc = model.get_protocol_conf(name)
+            if protc && !protc['skip_adapter']
+                parent_adapter = name
+                break
+            end
+        end
+
+        # refilter protocols
+        protocols = protocols.find_all { |e| e != parent_adapter } if parent_adapter
+
+        # adapter is not found has to implement everything event if there is only one protocol
+        if protocols.length
             protocols_methods = []
-            protocols_deep = protocol_list_deep(model, owner.protocols, c).find_all { |e| e != 'NSObjectProtocol' }
-            protocols_deep[1..-1].each do |name|
+            protocols_deep = protocol_list_deep(model, protocols, {}).find_all { |e| e != 'NSObjectProtocol' }
+            protocols_deep.each do |name|
                 protc = model.get_protocol_conf(name)
                 prot = model.objc_protocols.find { |p| p.name == name } if protc
-                protocols_methods.push([prot.instance_methods + prot.class_methods + prot.properties, protc]) if prot && protc
+                next unless prot && protc
+
+                if !parent_adapter && !protc['skip_adapter']
+                    # use this protocol as adapter one
+                    parent_adapter = prot.name
+                else
+                    # use this protocol to implement all methods
+                    protocols_methods.push([prot.instance_methods + prot.class_methods + prot.properties, protc])
+                end
             end
             prot_members = prot_members + protocols_methods
         end
@@ -3660,7 +3683,7 @@ ARGV[1..-1].each do |yaml_file|
 
         data = template_datas[owner_name] || {}
         data['name'] = owner_name
-        data['extends'] = protocols.empty? ? 'NSObject' : "#{protocols[0]}Adapter"
+        data['extends'] = parent_adapter ? "#{parent_adapter}Adapter" : 'NSObject'
         data['implements'] = "implements #{interface_name}"
         methods_s = methods_lines.flatten.join("\n    ")
         data['methods'] = (data['methods'] || '') + "\n    #{methods_s}\n    "
