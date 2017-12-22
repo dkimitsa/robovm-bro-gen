@@ -140,6 +140,11 @@ module Bro
             attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.dep_version != nil && e.platform == $target_platform }
             attrib.dep_version if attrib
         end
+
+        def valueAttributeForKey(key)
+            attrib = @attributes.find { |e| e.is_a?(KeyValueAttribute) && e.key == key }
+            attrib.value if attrib
+        end
     end
 
     class Pointer < Entity
@@ -363,6 +368,16 @@ module Bro
             super(source)
         end
     end
+    # attribute to attach important data
+    class KeyValueAttribute < Attribute
+        attr_accessor :key, :value
+        def initialize(source)
+            super(source)
+            source =~ /^(.*?)\("?(.*?)"?\)$/
+            @key = $1
+            @value = $2
+        end
+    end
     class AvailableAttribute < Attribute
         attr_accessor :platform, :version, :dep_version
         def initialize(source)
@@ -423,6 +438,8 @@ module Bro
         #    source.start_with?('swift_') || # appeared in ios11, ignore all swift4 attr
         #    source.start_with?('NS_OPTIONS') # TODO: there is a lot of such outputs once moved to ios11 due pre-processor workaround. currently just ignoring
         #     return IgnoredAttribute.new source # TODO: lot of these macro are not present anymore as were expanded by pre-clang preprocessor call
+        elsif source.start_with?('objc_runtime_name(')
+            return KeyValueAttribute.new source
         else
             # return UnsupportedAttribute.new source
             # TODO: there is nothing special about all tese bunch of attributes listed in IgnoredAttribute
@@ -1797,7 +1814,7 @@ module Bro
                 # Replace all [] with *
                 name = name.gsub(/\[\]/, '*')
                 name = name.sub(/^(id|NSObject)(<.*>)?\s*/, 'NSObject *')
-                base = name.sub(/^([^\s*]+).*/, '\1')
+                base = name.sub(/^(.*?)[\s]*[*]+/, '\1')
                 e = case base
                     when /^(unsigned )?char$/ then resolve_type_by_name('byte')
                     when /^long$/ then resolve_type_by_name('MachineSInt')
@@ -3582,6 +3599,8 @@ ARGV[1..-1].each do |yaml_file|
 
         next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
         name = c['name'] || cls.java_name
+        runtime_name = cls.valueAttributeForKey("objc_runtime_name")
+        runtime_name = "(\"#{runtime_name}\")" if runtime_name
         data = template_datas[name] || {}
         data['name'] = name
         data['visibility'] = c['visibility'] || 'public'
@@ -3589,7 +3608,7 @@ ARGV[1..-1].each do |yaml_file|
         data['imports'] = imports_s
         data['implements'] = protocol_list_s(model, 'implements', cls.protocols, c)
         data['ptr'] = "public static class #{cls.java_name}Ptr extends Ptr<#{cls.java_name}, #{cls.java_name}Ptr> {}"
-        data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})").push('@NativeClass')
+        data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})").push("@NativeClass#{runtime_name}")
         data['bind'] = "static { ObjCRuntime.bind(#{name}.class); }"
         data['javadoc'] = "\n" + model.push_availability(cls).join("\n") + "\n"
         template_datas[name] = data
