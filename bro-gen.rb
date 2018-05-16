@@ -1637,6 +1637,11 @@ module Bro
             @model.cfoptions.include?(@id)
         end
 
+        def java_name
+            n = enum_conf['name'] || self.name
+            n
+        end
+
         def merge_with
             enum_conf['merge_with']
         end
@@ -2093,14 +2098,18 @@ module Bro
                         src.strip!
                         src = src[1..-2] while src.start_with?('(') && src.end_with?(')')
                         src = src.sub(/^\((long long|long|int)\)/, '')
-                        # Only include macros that look like integer or floating point values for now
                         if src =~ /^(([-+.0-9Ee]+[fF]?)|(~?0x[0-9a-fA-F]+[UL]*)|(~?[0-9]+[UL]*))$/i
+                            # include macros that look like integer or floating point values for now
                             value = $1
                             value = value.sub(/^((0x)?.*)U$/i, '\1')
                             value = value.sub(/^((0x)?.*)UL$/i, '\1')
                             value = value.sub(/^((0x)?.*)ULL$/i, '\1L')
                             value = value.sub(/^((0x)?.*)LL$/i, '\1L')
                             @constant_values.push ConstantValue.new self, cursor, value
+                        elsif src =~ /^[@]?(".*")$/i
+                            # try to pick up strings, could be broken in comlex cases 
+                            value = $1
+                            @constant_values.push ConstantValue.new self, cursor, value, String
                         else
                             v = @constant_values.find { |e| e.name == src }
                             if v
@@ -2828,7 +2837,7 @@ end
 
 
 $mac_version = nil
-$ios_version = '11.0'
+$ios_version = '11.3'
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
 sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS#{$ios_version}.sdk"
