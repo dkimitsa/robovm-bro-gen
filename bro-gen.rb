@@ -521,7 +521,17 @@ module Bro
                         @struct = Struct.new model, cursor, nil, cursor.spelling.match(/\bunion\b/)
                     end
                 when :cursor_enum_decl
-                    @enum = Enum.new model, cursor
+                    # try to find the enum as it should be created already
+                    eid = Bro.location_to_id(cursor.location)
+                    e = model.enums.find { |e| e.id == eid}
+                    @enum = e || (Enum.new model, cursor)
+                    if @enum.name == nil || @enum.name.empty?
+                        # special case: there could be no name in enum typedef declaration
+                        # in this case there is no name attached to enum which will make
+                        # difficulties exporting it, just attach typedef name to enum
+                        # name in this case s
+                        @enum.name = @name
+                    end
                 end
                 next :continue
             end
@@ -1872,7 +1882,7 @@ module Bro
                     else
                         if td.typedef_type.kind == :type_block_pointer
                             resolve_type(td.typedef_type)
-                        elsif td.is_callback? || td.is_struct? || td.is_enum?
+                        elsif td.is_callback? || td.is_struct?
                             td
                         elsif get_class_conf(td.name)
                             td
@@ -2107,7 +2117,7 @@ module Bro
                             value = value.sub(/^((0x)?.*)LL$/i, '\1L')
                             @constant_values.push ConstantValue.new self, cursor, value
                         elsif src =~ /^[@]?(".*")$/i
-                            # try to pick up strings, could be broken in comlex cases 
+                            # try to pick up strings, could be broken in comlex cases
                             value = $1
                             @constant_values.push ConstantValue.new self, cursor, value, String
                         else
