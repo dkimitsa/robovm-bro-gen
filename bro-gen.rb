@@ -1443,7 +1443,7 @@ module Bro
     end
 
     class GlobalValue < Entity
-        attr_accessor :type, :enum, :dictionary
+        attr_accessor :type, :enum, :dictionary, :const
         def initialize(model, cursor)
             super(model, cursor)
             @type = cursor.type
@@ -1467,10 +1467,27 @@ module Bro
                 end
                 next :continue
             end
+
+            # find out const status
+            @const = @type.spelling.match(/\bconst\b/) != nil
+            if @const == false
+                # dkimitsa:
+                # there is a bug that const pointers are not reported as conststs
+                # for ex "CFStringRef  _Nonnull const", is being reported as
+                # "CFStringRef" which results in lot of setters for read only.
+                # also result_type is not populated
+                # fields. But result type can be obtained from cursor.completion
+                # and as workaround I will try this
+                if cursor.completion != nil
+                    ch = cursor.completion.chunks.detect{|e| e[:kind] == :result_type}
+                    ch = ch[:text] if ch != nil
+                    @const = ch.match(/\bconst\b/) != nil if ch != nil
+                end
+            end
         end
 
         def is_const?
-            @type.spelling.match(/\bconst\b/) != nil
+            @const
         end
     end
 
@@ -2847,7 +2864,7 @@ end
 
 
 $mac_version = nil
-$ios_version = '11.4'
+$ios_version = '12.0'
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
 sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS#{$ios_version}.sdk"
