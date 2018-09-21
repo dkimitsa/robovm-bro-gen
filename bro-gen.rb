@@ -1703,11 +1703,12 @@ module Bro
 
     class Model
         attr_accessor :conf, :typedefs, :functions, :objc_classes, :objc_protocols, :objc_categories, :global_values, :global_value_enums, :global_value_dictionaries, :constant_values, :structs, :enums, :cfenums,
-                      :cfoptions, :conf_functions, :conf_values, :conf_constants, :conf_classes, :conf_protocols, :conf_categories, :conf_enums, :conf_typed_enums
+                      :cfoptions, :conf_functions, :conf_values, :conf_constants, :conf_classes, :conf_protocols, :conf_categories, :conf_enums, :conf_typed_enums, :conf_generic_typedefs
         def initialize(conf)
             @conf = conf
             @conf_typedefs = @conf['typedefs'] || {}
             @conf_structdefs = @conf['structdefs'] || {}
+            @conf_generic_typedefs = @conf['generic_typedefs'] || {}
             @conf_enums = @conf['enums'] || {}
             @conf_typed_enums = @conf['typed_enums'] || {}
             @conf_functions = @conf['functions'] || {}
@@ -1736,10 +1737,17 @@ module Bro
             object_id
         end
 
-        def resolve_type_by_name(name)
+        def resolve_type_by_name(name, generic = false )
             name = name.sub(/^(@ByVal|@Array.*)\s+/, '')
             orig_name = name
-            name = @conf_typedefs[name] || name
+            # dkimitsa: if requested for generic search in separate configuration
+            # this prevents NSString* to be converted into String in cases such
+            # as NSArray<NSString*>
+            if generic && @conf_generic_typedefs[name]
+                name = @conf_generic_typedefs[name]
+            else
+                name = @conf_typedefs[name] || name
+            end
             e = Bro.builtins_by_name(name)
             e ||= @global_value_enums[name]
             e ||= @global_value_dictionaries[name]
@@ -1751,19 +1759,23 @@ module Bro
             e || (orig_name != name ? Builtin.new(name) : nil)
         end
 
-        def build_type_cache_name(type)
+        def build_type_cache_name(type, generic)
             if type.kind == :type_typedef && !@typedefs.find { |e| e.name == type.spelling } && type.declaration.kind == :cursor_template_type_parameter
                 # use lexical parent to as prefix to cache's key otherwise there will be wrong types picked up under same template type name
                 return type.declaration.lexical_parent.spelling.to_s + "." + type.spelling
             end
-            return type.spelling
+            if generic
+                type.spelling + ".<generic>"
+            else
+                type.spelling
+            end
         end
 
-        def resolve_type(type, allow_arrays = false, owner = nil, method = nil)
-            cache_id = build_type_cache_name(type)
+        def resolve_type(type, allow_arrays = false, owner = nil, method = nil, generic: false)
+            cache_id = build_type_cache_name(type, generic)
             t = @type_cache[cache_id]
             unless t
-                t = resolve_type0(type, allow_arrays, owner, method)
+                t = resolve_type0(type, allow_arrays, owner, method, generic)
                 raise "Failed to resolve type '#{type.spelling}' with kind #{type.kind} defined at #{Bro.location_to_s(type.declaration.location)}" unless t
                 if t.is_a?(Typedef) && t.is_callback?
                     # Callback.
@@ -1774,7 +1786,7 @@ module Bro
             t
         end
 
-        def resolve_type0(type, allow_arrays = false, owner = nil, _method = nil)
+        def resolve_type0(type, allow_arrays = false, owner = nil, _method = nil, _generic = false)
             return Bro.builtins_by_type_kind(:type_void) unless type
             name = type.spelling
             name = name.gsub(/\s*\bconst\b\s*/, '')
@@ -1787,6 +1799,8 @@ module Bro
             elsif @conf_typed_enums[name]
                 n = @conf_typed_enums[name]['enum'] || @conf_typed_enums[name]['dictionary']
                 resolve_type_by_name n
+            elsif _generic && @conf_generic_typedefs[name]
+                resolve_type_by_name name, true
             elsif @conf_typedefs[name]
                 resolve_type_by_name name
             elsif @conf_structdefs[name]
@@ -1849,7 +1863,9 @@ module Bro
                             if (g == 'id' || g == "NSObject")
                                 generic_types.push(Builtin.new("?"))
                             else
-                                gtype = resolve_type_by_name(g)
+                                gtype = resolve_type_by_name(g, true)
+                                # dkimitsa: in case it is typedef -- have to expand it till match low level type
+                                gtype = resolve_type(gtype.typedef_type, generic: true) if gtype.is_a?(Typedef)
                                 valid_generics &= gtype.is_a?(ObjCClass) || gtype.is_a?(Typedef) || gtype.is_a?(Builtin)
                                 break unless valid_generics
                                 generic_types.push(gtype)
@@ -2950,6 +2966,7 @@ ARGV[1..-1].each do |yaml_file|
     conf = global.merge conf
     conf['typedefs'] = (global['typedefs'] || {}).merge(conf['typedefs'] || {}).merge(conf['private_typedefs'] || {})
     conf['structdefs'] = (global['structdefs'] || {}).merge(conf['structdefs'] || {}).merge(conf['private_structdefs'] || {})
+    conf['generic_typedefs'] = (global['generic_typedefs'] || {}).merge(conf['generic_typedefs'] || {}).merge(conf['generic_typedefs'] || {})
 
     framework_roots = []
 
@@ -3011,6 +3028,7 @@ ARGV[1..-1].each do |yaml_file|
         conf['typed_enums'] = c_typed_enums.merge(conf['typed_enums'] || {})
         conf['typedefs'] = (c['typedefs'] || {}).merge(conf['typedefs'] || {})
         conf['structdefs'] = (c['structdefs'] || {}).merge(conf['structdefs'] || {})
+        conf['generic_typedefs'] = (c['generic_typedefs'] || {}).merge(conf['generic_typedefs'] || {})
         conf['annotations'] = (c['annotations'] || []).concat(conf['annotations'] || [])
         if conf['merge_vals_consts_functs']
             # TODO: this is experimental and required for AudioUnit only for now
