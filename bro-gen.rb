@@ -958,8 +958,8 @@ module Bro
             @name = name
             @enum = enum
             @type = first.type
-            vconf = model.get_value_conf(first.name)
-            @java_type = vconf['type'] || model.resolve_type(@type)
+            vconf = first.conf
+            @java_type = vconf['type'] || @model.to_java_type(@model.resolve_type(@type))
             @mutable = vconf['mutable'].nil? ? true : vconf['mutable']
             @methods = vconf['methods']
             @generate_marshalers = vconf['marshalers'] || true
@@ -1102,10 +1102,10 @@ module Bro
         def append_convenience_methods(lines)
             lines << "\n"
             @values.find_all { |v| v.is_available? && !v.is_outdated? }.each do |v|
-                vconf = @model.get_value_conf(v.name)
-                vname = vconf['name'] || v.name
+                vconf = v.conf
+                java_name = v.java_name()
 
-                method = @methods.detect { |m| vname == m[0] || v.name == m[0] }
+                method = @methods.detect { |m| java_name == m[0] || v.name == m[0] }
                 next unless method
                 mconf = method[1]
                 name = mconf['name'] || method[0]
@@ -1116,7 +1116,7 @@ module Bro
                 getter = @model.getter_for_name(param_name, type, omit_prefix)
 
                 default_value = mconf['default'] || @model.default_value_for_type(type)
-                key_accessor = @enum ? "#{@enum.name}.#{vname}" : "Keys.#{vname}()"
+                key_accessor = @enum ? "#{@enum.name}.#{java_name}" : "Keys.#{java_name}()"
 
                 annotations = mconf['annotations'] && !mconf['annotations'].empty? ? mconf['annotations'].uniq.join(' ') : nil
 
@@ -1214,10 +1214,10 @@ module Bro
                         s << "NSArray<NSString> val = (NSArray<NSString>) get(#{key_accessor});"
                         s << 'return val.asStringList();'
                     when /^List<(.*)>$/
-                        s << "NSArray<?> val = (NSArray<?>) get(#{key_accessor});"
 
                         generic_type = @model.resolve_type_by_name($1.to_s)
                         if generic_type.is_a?(GlobalValueDictionaryWrapper)
+                            s << "NSArray<?> val = (NSArray<?>) get(#{key_accessor});"
                             s << "List<#{$1}> list = new ArrayList<>();"
                             s << 'NSDictionary[] array = (NSDictionary[]) val.toArray(new NSDictionary[val.size()]);'
                             s << 'for (NSDictionary d : array) {'
@@ -1225,8 +1225,9 @@ module Bro
                             s << '}'
                             s << 'return list;'
                         else
-                            s << "return val.toList(#{$1}.class);"
-                              end
+                            s << "NSArray<#{$1}> val = (NSArray<#{$1}>) get(#{key_accessor});"
+                            s << "return val;"
+                        end
                     when 'Map<String, NSObject>'
                         s << "NSDictionary val = (NSDictionary) get(#{key_accessor});"
                         s << 'return val.asStringMap();'
@@ -1415,10 +1416,10 @@ module Bro
             lines << '    static { Bro.bind(Keys.class); }'
 
             @values.find_all { |v| v.is_available? && !v.is_outdated? }.each do |v|
-                vconf = @model.get_value_conf(v.name)
+                vconf = v.conf
 
                 indentation = '    '
-                vname = vconf['name'] || v.name
+                java_name = v.java_name()
                 java_type = vconf['type'] || @model.to_java_type(@model.resolve_type(v.type, true))
                 visibility = vconf['visibility'] || 'public'
 
@@ -1428,7 +1429,7 @@ module Bro
                 else
                     lines << "#{indentation}@GlobalValue(symbol=\"#{v.name}\", optional=true)"
                 end
-                lines << "#{indentation}#{visibility} static native #{java_type} #{vname}();"
+                lines << "#{indentation}#{visibility} static native #{java_type} #{java_name}();"
             end
 
             lines << '}'
@@ -1443,7 +1444,7 @@ module Bro
             super(model, nil)
             @name = name
             @type = first.type
-            vconf = model.get_value_conf(first.name)
+            vconf = first.conf
             @java_type = vconf['type'] || model.to_java_type(model.resolve_type(@type, true))
             @extends = vconf['enum_extends'] || vconf['extends']
             @values = [first]
@@ -1451,14 +1452,14 @@ module Bro
     end
 
     class GlobalValue < Entity
-        attr_accessor :type, :enum, :dictionary, :const
+        attr_accessor :type, :enum, :dictionary, :const, :java_name, :conf
         def initialize(model, cursor)
             super(model, cursor)
             @type = cursor.type
 
-            conf = model.get_value_conf(name)
-            @enum = conf ? conf['enum'] : nil
-            @dictionary = conf ? conf['dictionary'] : nil
+            @conf = model.get_typed_enum_conf(@type) || model.get_value_conf(name)
+            @enum = @conf ? @conf['enum'] : nil
+            @dictionary = @conf ? @conf['dictionary'] : nil
 
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
@@ -1496,6 +1497,24 @@ module Bro
 
         def is_const?
             @const
+        end
+
+        def java_name
+            if @java_name
+                @java_name
+            else
+                n = @conf['name']
+                if n == nil
+                    prefix = @conf["prefix"] || ""
+                    suffix = @conf["suffix"] || ""
+                    n = @name
+                    n = n[prefix.size..-1] if n.start_with?(prefix)
+                    n = n[0..(n.size - suffix.size - 1)] if n.end_with?(suffix)
+                end
+                n = "_#{n}" if n[0] >= '0' && n[0] <= '9'
+                @java_name = n
+                n
+            end
         end
     end
 
@@ -1684,12 +1703,13 @@ module Bro
 
     class Model
         attr_accessor :conf, :typedefs, :functions, :objc_classes, :objc_protocols, :objc_categories, :global_values, :global_value_enums, :global_value_dictionaries, :constant_values, :structs, :enums, :cfenums,
-                      :cfoptions, :conf_functions, :conf_values, :conf_constants, :conf_classes, :conf_protocols, :conf_categories, :conf_enums
+                      :cfoptions, :conf_functions, :conf_values, :conf_constants, :conf_classes, :conf_protocols, :conf_categories, :conf_enums, :conf_typed_enums
         def initialize(conf)
             @conf = conf
             @conf_typedefs = @conf['typedefs'] || {}
             @conf_structdefs = @conf['structdefs'] || {}
             @conf_enums = @conf['enums'] || {}
+            @conf_typed_enums = @conf['typed_enums'] || {}
             @conf_functions = @conf['functions'] || {}
             @conf_values = conf['values'] || {}
             @conf_constants = conf['constants'] || {}
@@ -1764,6 +1784,9 @@ module Bro
 
             if type.kind != :type_obj_c_object_pointer && @conf_typedefs[gen_name] # Try to lookup typedefs without generics
                 resolve_type_by_name gen_name
+            elsif @conf_typed_enums[name]
+                n = @conf_typed_enums[name]['enum'] || @conf_typed_enums[name]['dictionary']
+                resolve_type_by_name n
             elsif @conf_typedefs[name]
                 resolve_type_by_name name
             elsif @conf_structdefs[name]
@@ -2021,6 +2044,15 @@ module Bro
             get_conf_for_key(name, @conf_enums)
         end
 
+        def get_typed_enum_conf(type)
+            name = type.spelling
+            name = name.gsub(/\s*\bconst\b\s*/, '')
+            name = name.sub(/^(struct|union|enum)\s*/, '')
+            name = name.sub(/ *_(nonnull|nullable|null_unspecified) /i, '')
+            e = get_conf_for_key(name, @conf_typed_enums)
+            e if e != nil && !e['exclude']
+        end
+
         def is_byval_type?(type)
             type.is_a?(Struct) || type.is_a?(Typedef) && (type.is_struct? || type.typedef_type.kind == :type_record)
         end
@@ -2031,7 +2063,16 @@ module Bro
             elsif type.is_a?(Array)
                 "@Array({#{type.dimensions.join(', ')}}) #{type.java_name}"
             elsif type.respond_to?('each') # Generic type
-                "#{type[0].java_name}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
+                java_type = nil
+                # dkimitsa:
+                # special case: replacing NSDictionary<NS_TYPED_ENUM, ? > to
+                # typed_enum#dict if such is found
+                if type.length == 3 && type[0].java_name == "NSDictionary" && type[2].java_name == "?"
+                    # check configuration
+                    tconf = conf_typed_enums[type[1].java_name]
+                    java_type = tconf["dictionary"] if tconf
+                end
+                java_type || "#{type[0].java_name}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
             else
                 type.java_name
              end
@@ -2966,6 +3007,8 @@ ARGV[1..-1].each do |yaml_file|
         conf['protocols'] = c_protocols.merge(conf['protocols'] || {})
         c_enums = (c['enums'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
         conf['enums'] = c_enums.merge(conf['enums'] || {})
+        c_typed_enums = (c['typed_enums'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+        conf['typed_enums'] = c_typed_enums.merge(conf['typed_enums'] || {})
         conf['typedefs'] = (c['typedefs'] || {}).merge(conf['typedefs'] || {})
         conf['structdefs'] = (c['structdefs'] || {}).merge(conf['structdefs'] || {})
         conf['annotations'] = (c['annotations'] || []).concat(conf['annotations'] || [])
@@ -3133,7 +3176,7 @@ ARGV[1..-1].each do |yaml_file|
     # Assign global values to classes
     values = {}
     model.global_values.find_all { |v| v.is_available? && !v.is_outdated? }.each do |v|
-        vconf = model.get_value_conf(v.name)
+        vconf = v.conf
         if vconf && !vconf['exclude']
             owner = vconf['class'] || default_class
             values[owner] = (values[owner] || []).push([v, vconf])
@@ -3150,7 +3193,7 @@ ARGV[1..-1].each do |yaml_file|
 
         methods_s = vals.map do |(v, vconf)|
             lines = []
-            name = vconf['name'] || v.name
+            java_name = v.java_name()
             java_type = vconf['type'] || model.to_java_type(model.resolve_type(v.type, true))
             visibility = vconf['visibility'] || 'public'
 
@@ -3174,10 +3217,10 @@ ARGV[1..-1].each do |yaml_file|
             else
                 lines.push("#{indentation}@GlobalValue(symbol=\"#{v.name}\", optional=true)")
             end
-            lines.push("#{indentation}#{visibility} static native #{java_type} #{name}();")
+            lines.push("#{indentation}#{visibility} static native #{java_type} #{java_name}();")
             if !v.is_const? && !vconf['readonly']
                 model.push_availability(v, lines, indentation)
-                lines += ["#{indentation}@GlobalValue(symbol=\"#{v.name}\", optional=true)", "public static native void #{name}(#{java_type} v);"]
+                lines += ["#{indentation}@GlobalValue(symbol=\"#{v.name}\", optional=true)", "public static native void #{java_name}(#{java_type} v);"]
             end
             lines
         end.flatten.join("\n    ")
@@ -3291,12 +3334,11 @@ ARGV[1..-1].each do |yaml_file|
         e.values.sort_by { |v| v.since || 0.0 }
 
         e.values.find_all { |v| v.is_available? && !v.is_outdated? }.each do |v|
-            vconf = model.get_value_conf(v.name)
+            vconf = v.conf
 
-            vname = vconf['name'] || v.name
-            vname = "_#{vname}" if vname =~ /^[0-9]/
+            java_name = v.java_name()
 
-            names.push(vname)
+            names.push(java_name)
             java_type = vconf['type'] || model.to_java_type(model.resolve_type(v.type, true))
             java_type = 'int' if java_type == 'Integer'
             visibility = vconf['visibility'] || 'public'
@@ -3307,10 +3349,10 @@ ARGV[1..-1].each do |yaml_file|
             else
                 vlines.push("#{indentation}@GlobalValue(symbol=\"#{v.name}\", optional=true)")
             end
-            vlines.push("#{indentation}#{visibility} static native #{java_type} #{vname}();")
+            vlines.push("#{indentation}#{visibility} static native #{java_type} #{java_name}();")
 
             model.push_availability(v, clines)
-            clines.push("public static final #{name} #{vname} = new #{name}(\"#{vname}\");")
+            clines.push("public static final #{name} #{java_name} = new #{name}(\"#{java_name}\");")
         end
 
         values_s = vlines.flatten.join("\n    ")
