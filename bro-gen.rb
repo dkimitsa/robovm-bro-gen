@@ -915,7 +915,7 @@ module Bro
             @owner = nil
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
-                when :cursor_unexposed_expr, :cursor_template_type_parameter
+                when :cursor_unexposed_expr, :cursor_template_type_parameter, 417 # 417=CXCursor_VisibilityAttr
                 # ignored
                 when :cursor_obj_c_class_ref
                     @owner = cursor.spelling
