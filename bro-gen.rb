@@ -141,6 +141,11 @@ module Bro
             attrib.dep_version if attrib
         end
 
+        def reason
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.dep_message != nil && e.platform == $target_platform }
+            attrib.dep_message if attrib
+        end
+
         def valueAttributeForKey(key)
             attrib = @attributes.find { |e| e.is_a?(KeyValueAttribute) && e.key == key }
             attrib.value if attrib
@@ -379,7 +384,7 @@ module Bro
         end
     end
     class AvailableAttribute < Attribute
-        attr_accessor :platform, :version, :dep_version
+        attr_accessor :platform, :version, :dep_version, :dep_message
         def initialize(source)
             super(source)
             source =~ /^availability\((.*)\)/
@@ -388,6 +393,7 @@ module Bro
             args = args.collect{|x| x.strip || x}
             @version = nil
             @dep_version = nil
+            @dep_message = nil
             @platform = args[0]
             args[1..-1].each do |v|
                 if v == 'unavailable'
@@ -396,6 +402,8 @@ module Bro
                     @version = str_to_float(v.sub('introduced=', '').sub('_', '.'))
                 elsif v.start_with?('deprecated=')
                     @dep_version = str_to_float(v.sub('deprecated=', '').sub('_', '.'))
+                elsif v.start_with?('message="') && v.end_with?('"')
+                    @dep_message = v.sub('message="', '')[0..-2]
                 end
             end
         end
@@ -2091,10 +2099,12 @@ module Bro
         def push_availability(entity, lines = [], indentation = '')
             since = entity.since
             deprecated = entity.deprecated
+            reason = entity.reason
             if since || deprecated
                 lines.push("#{indentation}/**")
                 lines.push("#{indentation} * @since Available in iOS #{since} and later.") if since
-                lines.push("#{indentation} * @deprecated Deprecated in iOS #{deprecated}.") if deprecated
+                lines.push("#{indentation} * @deprecated Deprecated in iOS #{deprecated}.") if deprecated && !reason
+                lines.push("#{indentation} * @deprecated Deprecated in iOS #{deprecated}. #{reason}") if deprecated && reason
                 lines.push("#{indentation} */")
                 lines.push("#{indentation}@Deprecated") if deprecated
             end
