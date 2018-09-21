@@ -3669,7 +3669,7 @@ ARGV[1..-1].each do |yaml_file|
         else
             protocols.each do |name|
                 c = model.get_protocol_conf(name)
-                l.push(model.objc_protocols.find { |p| p.name == name }.java_name) if c
+                l.push(model.objc_protocols.find { |p| p.name == name }.java_name) if c && !c['skip_implements']
             end
         end
         l
