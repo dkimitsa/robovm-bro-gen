@@ -582,7 +582,7 @@ module Bro
 
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
-                when :cursor_unexposed_expr
+                when :cursor_unexposed_expr, 417
                 # ignored
                 when :cursor_field_decl
                     @members.push StructMember.new cursor
@@ -1666,6 +1666,15 @@ module Bro
                         @prefix.slice!(e.size..-1) if e.size < @prefix.size # optimisation
                         @prefix.chop! while e.index(@prefix) != 0
                     end
+
+                    # if calculated prefix is longer than name but name is
+                    # common prefix, use name as prefix, otherwise it might cut
+                    # elements name
+                    if @prefix && name && prefix.start_with?(name + "_")
+                        @prefix = name + "_"
+                    elsif @prefix && name && prefix.start_with?(name)
+                        @prefix = name
+                    end
                 end
 
                 unless @prefix
@@ -1894,6 +1903,8 @@ module Bro
                 # type is an unbounded array (void *[]). libclang does not expose info on such types.
                 # Replace all [] with *
                 name = name.gsub(/\[\]/, '*')
+                # remove all _Nullable
+                name = name.gsub(/[\s]*_Nullable[\s]*/, '')
                 name = name.sub(/^(id|NSObject)(<.*>)?\s*/, 'NSObject *')
                 base = name.sub(/^(.*?)[\s]*[*]+/, '\1')
                 e = case base
