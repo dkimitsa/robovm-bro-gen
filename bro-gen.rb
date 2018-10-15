@@ -403,7 +403,9 @@ module Bro
                 elsif v.start_with?('deprecated=')
                     @dep_version = str_to_float(v.sub('deprecated=', '').sub('_', '.'))
                 elsif v.start_with?('message="') && v.end_with?('"')
-                    @dep_message = v.sub('message="', '')[0..-2]
+                    @dep_message = v.sub('message=', '')[0..-1]
+                    @dep_message = eval(@dep_message).strip
+                    @dep_message = nil if @dep_message.empty?
                 end
             end
         end
