@@ -1651,7 +1651,16 @@ module Bro
             else
                 name = self.name
                 @prefix = enum_conf['prefix']
-                if !@prefix && @values.size > 1
+                return @prefix if @prefix
+                if @values.size == 1
+                    # calculate prefix from name
+                    @prefix = @values[0].name.dup
+                    if @prefix && name && prefix.start_with?(name + "_")
+                        @prefix = name + "_"
+                    elsif @prefix && name && prefix.start_with?(name)
+                        @prefix = name
+                    end
+                elsif @values.size > 1
                     # Determine common prefix
                     @prefix = @values[0].name.dup
                     @values[1..-1].each do |p|
