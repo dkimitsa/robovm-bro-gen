@@ -3242,7 +3242,8 @@ ARGV[1..-1].each do |yaml_file|
         data['name'] = owner
 
         last_static_class = nil
-        vals.sort_by! { |_v, vconf| vconf['static_class'] || ""}
+        # making sort stable
+        vals = vals.sort_by.with_index { |v_vconf, idx| [v_vconf[1]['static_class'] || "", idx]}
 
         methods_s = vals.map do |(v, vconf)|
             lines = []
