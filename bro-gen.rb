@@ -2965,7 +2965,7 @@ end
 
 
 $mac_version = nil
-$ios_version = '12.0'
+$ios_version = '12.1'
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
 sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS#{$ios_version}.sdk"
