@@ -2667,11 +2667,12 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
             if method.name.end_with?(':') && method.name.count(':') == 1
                 # dont attach $ char to one parameter method, just remove it
                 name = method.name[0..-2]
+                suggestion_data = [full_name, name] if name.include?("With")
             else
                 name = method.name.tr(':', '$')
                 # report this case in suggestion_data to point dev that this method
                 # will receive $$ in the name
-                suggestion_data = [full_name, name] if !conf['trim_after_first_colon'] && name.count('$') > 0
+                suggestion_data = [full_name, name] if !conf['trim_after_first_colon'] && (name.count('$') > 0)
             end
             if method.parameters.empty? && method.return_type.kind != :type_void && conf['property']
                 base = name[0, 1].upcase + name[1..-1]
@@ -4043,7 +4044,8 @@ ARGV[1..-1].each do |yaml_file|
                 # one argument and it is name is not overridden in yaml.
                 # which will lead to $ signs in name so this will cost another
                 # run of bro-gen with updated yaml file.
-                add_potential_new_entry(owner, a[2]) if a.length > 2 && a[2] != nil && a[2].length > 0
+                # * do not add if method comes from protocol into object
+                add_potential_new_entry(owner, a[2]) if a.length > 2 && a[2] != nil && a[2].length > 0 && !(members_owner.is_a?(Bro::ObjCProtocol) && owner.is_a?(Bro::ObjCClass))
 
                 # find out if there is visible default constructor
                 has_def_constructor |= full_name == '-init' && !members_conf['exclude']
@@ -4174,6 +4176,18 @@ ARGV[1..-1].each do |yaml_file|
           puts "\n\n\n"
       end
 
+
+      # helper finds if method present in super
+      def is_method_in_super(model, cls, full_name)
+          while cls.superclass do
+              cls = model.objc_classes.find { |e| e.name == cls.superclass }
+              (cls.instance_methods + cls.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
+                  return true if full_name == (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
+              end
+          end
+          return false
+      end
+
       # dumping classes and protocols
       potential_classes_protos = [
           ["classes", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCClass)}],
@@ -4191,7 +4205,7 @@ ARGV[1..-1].each do |yaml_file|
               if bad_methods == nil
                   # it is a new class/proto and information about it has to be extracted
                   (cls.instance_methods + cls.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
-                      next unless m.name.count(':') > 1
+                      next unless m.name.count(':') > 1 || m.name.include?("With")
                       bad_methods ||= []
                       full_name = (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
                       bad_methods.push([full_name, m.name.tr(':', '$')])
@@ -4200,11 +4214,36 @@ ARGV[1..-1].each do |yaml_file|
 
               puts "    #{cls.name}:" + (!bad_methods ? " {}" : "") + (cls.since  ? " \#since #{cls.since}" : "")
               next unless bad_methods
+
+              # divide bad_methods into two set -- one with methods that has
+              # configuration in parent classes (will be added at bottom)
+              # as these probably not required to be configured. As once
+              # parrent class is configured it configuration will be inherited
+              if cls.is_a?(Bro::ObjCClass) && cls.superclass
+                  bad_methods_new = []
+                  bad_methods_inherited = []
+                  bad_methods.each do |full_name, name|
+                      if is_method_in_super(model, cls, full_name)
+                          bad_methods_inherited.push([full_name, name])
+                      else
+                          bad_methods_new.push([full_name, name])
+                      end
+                  end
+              else
+                  bad_methods_new = bad_methods
+                  bad_methods_inherited = []
+              end
+
               puts "        methods:"
-              bad_methods.each do |full_name, name|
-                  puts "            '#{full_name}':"
-                  puts "                \#trim_after_first_colon: true"
-                  puts "                name: #{name}"
+              bad_methods_list = [[nil, bad_methods_new]]
+              bad_methods_list.push([" -- methods available in super, don't config if super is configured --", bad_methods_inherited]) unless bad_methods_inherited.empty?
+              bad_methods_list.each do |title, bad_methods|
+                  puts "                \##{title}" if title
+                  bad_methods.each do |full_name, name|
+                      puts "            '#{full_name}':"
+                      puts "                \#trim_after_first_colon: true" if (full_name.count(':') > 1)
+                      puts "                name: #{name}"
+                  end
               end
           end
           puts "\n\n\n"
