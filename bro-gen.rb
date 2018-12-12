@@ -792,7 +792,6 @@ module Bro
             @protocols = []
             @instance_vars = []
             @class_vars = []
-            @def_constructor = true
             if cursor.kind == :cursor_obj_c_class_ref
                 @opaque = true
                 return
@@ -818,7 +817,6 @@ module Bro
                 #          @class_vars.push(ObjCClassVar.new(model, cursor))
                 when :cursor_obj_c_instance_method_decl
                     method = ObjCInstanceMethod.new(model, cursor, self)
-                    @def_constructor = false if is_init?(self, method) && !method.is_available?
                     @instance_methods.push(method)
                 when :cursor_obj_c_class_method_decl
                     @class_methods.push(ObjCClassMethod.new(model, cursor, self))
@@ -844,10 +842,6 @@ module Bro
 
         def is_opaque?
             @opaque
-        end
-
-        def has_def_constructor?
-            @def_constructor
         end
     end
 
@@ -2622,7 +2616,7 @@ def property_to_java(model, owner, prop, props_conf, seen, adapter = false)
     end
 end
 
-def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter = false, prot_as_class = false)
+def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter = false, prot_as_class = false, inherited_initializers = false)
     return [[], []] if method.is_outdated? || method.is_a?(Bro::ObjCClassMethod) && owner.is_a?(Bro::ObjCProtocol)
 
     return [[], []] if owner.is_a?(Bro::ObjCProtocol) && is_method_like_init?(owner, method)
@@ -2647,7 +2641,8 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
     elsif !conf['exclude']
         # is used to produce hints for faster yaml file contructinon
         suggestion_data = nil
-
+        # dkimitsa: if not specified in config(get here as nil) -- consider as false
+        prot_as_class = false if prot_as_class == nil
         ret_type = get_generic_type(model, owner, method, method.return_type, 0, conf['return_type'])
         params_conf = conf['parameters'] || {}
         param_types = method.parameters.each_with_object([]) do |p, l|
@@ -2724,7 +2719,7 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
 
         annotations = conf['annotations'] && !conf['annotations'].empty? ? conf['annotations'].uniq.join(' ') : nil
         static_constructor = !conf['constructor'].nil? && conf['constructor'] == true && is_static
-        # introduced constructor wrapper to be able solve cases when there are two init* mathods with same arguments
+        # introduced constructor wrapper to be able solve cases when there are two init* methods with same arguments
         # which makes impossible to create two constructors in java
         static_constructor_name = is_static ? nil : conf['static_constructor_name']
 
@@ -2766,21 +2761,25 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
             visibility = 'protected'
         end
 
-        model.push_availability(method, method_lines)
-        method_lines << annotations.to_s if annotations
-        method_lines << if adapter
-                            "@NotImplemented(\"#{method.name}\")"
-                        else
-                            "@Method(selector = \"#{method.name}\")"
-                        end
+        unless inherited_initializers
+            # do not add native method declaration if it is inherited.
+            # constructor will call super
+            model.push_availability(method, method_lines)
+            method_lines << annotations.to_s if annotations
+            method_lines << if adapter
+                                "@NotImplemented(\"#{method.name}\")"
+                            else
+                                "@Method(selector = \"#{method.name}\")"
+                            end
 
-        if owner.is_a?(Bro::ObjCCategory) && method.is_a?(Bro::ObjCClassMethod)
-            new_parameters_s = (['ObjCClass clazz'] + (param_types.map { |p| "#{p[0]} #{p[2]}" })).join(', ')
-            method_lines << "protected static native #{[ret_marshaler, ret_anno, generics_s, ret_type[0], name].find_all { |e| !e.empty? }.join(' ')}(#{new_parameters_s});"
-            args_s = (["ObjCClass.getByType(#{owner.owner}.class)"] + (param_types.map { |p| p[2] })).join(', ')
-            body = " { #{ret_type[0] != 'void' ? 'return ' : ''}#{name}(#{args_s}); }"
+            if owner.is_a?(Bro::ObjCCategory) && method.is_a?(Bro::ObjCClassMethod)
+                new_parameters_s = (['ObjCClass clazz'] + (param_types.map { |p| "#{p[0]} #{p[2]}" })).join(', ')
+                method_lines << "protected static native #{[ret_marshaler, ret_anno, generics_s, ret_type[0], name].find_all { |e| !e.empty? }.join(' ')}(#{new_parameters_s});"
+                args_s = (["ObjCClass.getByType(#{owner.owner}.class)"] + (param_types.map { |p| p[2] })).join(', ')
+                body = " { #{ret_type[0] != 'void' ? 'return ' : ''}#{name}(#{args_s}); }"
+            end
+            method_lines.push("#{[visibility, static, native, ret_marshaler, ret_anno, generics_s, ret_type[0], name].find_all { |e| !e.empty? }.join(' ')}(#{parameters_s})#{body}")
         end
-        method_lines.push("#{[visibility, static, native, ret_marshaler, ret_anno, generics_s, ret_type[0], name].find_all { |e| !e.empty? }.join(' ')}(#{parameters_s})#{body}")
         if owner.is_a?(Bro::ObjCClass) && conf['constructor'] != false && (is_init?(owner, method) || static_constructor)
             constructor_visibility = conf['constructor_visibility'] || 'public'
             args_s = param_types.map { |p| p[2] }.join(', ')
@@ -2806,6 +2805,18 @@ def method_to_java(model, owner_name, owner, method, methods_conf, seen, adapter
                     constructor_lines << "   return res;"
                     constructor_lines << "}"
                 end
+            elsif is_init?(owner, method) && inherited_initializers
+              # init method added from super class as inherited initializer
+              # in this case native method is not generated and constructor
+              # is implemented with only super call to presave java way of initialization
+              # however it is possible to declare native method and just call it
+              # but it block any possible initialization in super java part
+              constructor_lines << "@Method(selector = \"#{method.name}\")"
+              if conf['throws']
+                  constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{new_parameters_s}) throws #{conf['throws']} { super(#{params.join(', ')}); }"
+              else
+                  constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{parameters_s}) { super(#{args_s}); }"
+              end
             elsif is_init?(owner, method)
                 constructor_lines << "@Method(selector = \"#{method.name}\")"
                 if conf['throws']
@@ -3577,6 +3588,43 @@ ARGV[1..-1].each do |yaml_file|
         template_datas[owner] = data
     end
 
+
+    # returns inherited initializer.
+    # as these has to be turned into constructor in target classes
+    # also availability attribute allows controlling if these has to be
+    # added
+    def inherited_initializers(model, owner, conf)
+        def g(model, owner, cls, conf, seen)
+            r = []
+            return r if !cls.is_a?(Bro::ObjCClass)
+
+            inits = []
+            methods_conf = conf['methods'] || {}
+            cls.instance_methods.each do |method|
+                full_name = (method.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + method.name
+
+                next unless is_init?(owner, method) && !seen[full_name]
+                seen[full_name] = true
+
+                if owner != cls
+                    # skip if method is marked not constructor
+                    mconf = methods_conf[full_name]
+                    inits.push(method) unless mconf && mconf["exclude"] != true && mconf["constructor"] == false
+                end
+            end
+
+            r.push([inits, { "methods" => methods_conf, "inherited_initializers" => true }]) if inits.length > 0
+            if cls.superclass
+                supercls = model.objc_classes.find { |e| e.name == cls.superclass }
+                super_conf = model.get_class_conf(supercls.name)
+                r += g(model, owner, supercls, super_conf, seen) if super_conf != nil
+            end
+            r
+        end
+
+        g(model, owner, owner, conf, {})
+    end
+
     # Assign methods and properties to classes/protocols
     members = {}
     (model.objc_classes + model.objc_protocols).each do |cls|
@@ -3589,6 +3637,19 @@ ARGV[1..-1].each do |yaml_file|
         members[owner] = members[owner] || { owner: cls, owner_name: owner, members: [], conf: c }
         members[owner][:members].push([cls.instance_methods + cls.class_methods + cls.properties, c])
     end
+
+    # add initializers from super classes if these are missing
+    model.objc_classes.each do |cls|
+        c = model.get_class_conf(cls.name)
+        next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
+        owner = c['name'] || cls.java_name
+
+        # add inits from inherited classses
+        # otherwise class will lack possible constructors
+        inheriter_inits = inherited_initializers(model, cls, c)
+        members[owner][:members] += inheriter_inits
+    end
+
     unassigned_categories = []
     model.objc_categories.each do |cat|
         c = model.get_category_conf("#{cat.name}@#{cat.owner}")
@@ -3770,13 +3831,13 @@ ARGV[1..-1].each do |yaml_file|
         properties_lines = []
 
         # in case there is more than one protocol being inherited this addapter can't
-        # inherit other arapters but has to implement all methods of all protocols it inherits
+        # inherit other adapters but has to implement all methods of all protocols it inherits
         prot_members = h[:members]
         protocols = protocol_list(model, owner.protocols, c).find_all { |e| e != 'NSObjectProtocol' }
         parent_adapter = nil
         # check for one that is sutable for adapter s
         protocols.each do |name|
-            # check if there is adapter exists
+            # check if adapter exists
             protc = model.get_protocol_conf(name)
             if protc && !protc['skip_adapter']
                 parent_adapter = name
@@ -3832,15 +3893,19 @@ ARGV[1..-1].each do |yaml_file|
 
     members.values.each do |h|
         owner = h[:owner]
-        c = h[:conf]
+        owner_conf = h[:conf]
         owner_name = h[:owner_name]
         seen = {}
         methods_lines = []
         constructors_lines = []
         properties_lines = []
-        h[:members].each do |(members, c)|
+        has_def_constructor = false
+        h[:members].each do |(members, members_conf)|
             members.find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
-                a = method_to_java(model, owner_name, owner, m, c['methods'] || {}, seen, false, c['class'])
+                # resolve method conf
+                full_name = (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
+                inherited_initializers = members_conf['inherited_initializers'] || false
+                a = method_to_java(model, owner_name, owner, m, members_conf['methods'] || {}, seen, false, members_conf['class'], inherited_initializers)
                 methods_lines.concat(a[0])
                 constructors_lines.concat(a[1])
 
@@ -3849,34 +3914,37 @@ ARGV[1..-1].each do |yaml_file|
                 # which will lead to $ signs in name so this will cost another
                 # run of bro-gen with updated yaml file.
                 add_potential_new_entry(owner, a[2]) if a.length > 2 && a[2] != nil && a[2].length > 0
+
+                # find out if there is visible default constructor
+                has_def_constructor |= full_name == '-init' && !members_conf['exclude']
             end
             # TODO: temporaly don't add static properties to interfaces
             members.find_all { |m| m.is_a?(Bro::ObjCProperty) && m.is_available? && !(m.is_static? && owner.is_a?(Bro::ObjCProtocol))}.each do |p|
-                properties_lines.concat(property_to_java(model, owner, p, c['properties'] || {}, seen))
+                properties_lines.concat(property_to_java(model, owner, p, members_conf['properties'] || {}, seen))
             end
         end
 
         data = template_datas[owner_name] || {}
         data['name'] = owner_name
         if owner.is_a?(Bro::ObjCClass)
-            unless c['skip_skip_init_constructor']
+            unless owner_conf['skip_skip_init_constructor']
                 constructors_lines.unshift("protected #{owner_name}(SkipInit skipInit) { super(skipInit); }")
             end
-            unless c['skip_skip_init_constructor']
+            unless owner_conf['skip_skip_init_constructor']
                 constructors_lines.unshift("protected #{owner_name}(Handle h, long handle) { super(h, handle); }")
             end
-            if c['skip_handle_constructor'] == false
+            if owner_conf['skip_handle_constructor'] == false
                 constructors_lines.unshift("@Deprecated protected #{owner_name}(long handle) { super(handle); }")
             end
-            unless c['skip_def_constructor']
-                cv = owner.has_def_constructor? ? 'public' : 'protected'
+            unless owner_conf['skip_def_constructor']
+                cv = has_def_constructor ? 'public' : 'protected'
                 constructors_lines.unshift("#{cv} #{owner_name}() {}")
             end
         elsif owner.is_a?(Bro::ObjCCategory)
             constructors_lines.unshift("private #{owner_name}() {}")
             data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})")
             data['bind'] = "static { ObjCRuntime.bind(#{owner_name}.class); }"
-            data['visibility'] = c['visibility'] || 'public final'
+            data['visibility'] = owner_conf['visibility'] || 'public final'
             data['extends'] = 'NSExtensions'
         end
         methods_s = methods_lines.flatten.join("\n    ")
