@@ -1988,7 +1988,7 @@ module Bro
             elsif type.kind == :type_block_pointer
                 begin
                     ret_type = resolve_type(type.pointee.result_type)
-                    param_types = (0..type.pointee.num_arg_types-1).map { |idx| resolve_type(type.pointee.arg_type(idx))}
+                    param_types = (0..type.pointee.num_arg_types-1).map { |idx| resolve_type(type.pointee.arg_type(idx), generic: true)}
                     Block.new(self, ret_type, param_types)
                 rescue => e
                     $stderr.puts "WARN: Unknown block type #{name}. Using ObjCBlock. Failed to convert due: #{e}"
