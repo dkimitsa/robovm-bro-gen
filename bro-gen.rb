@@ -3006,7 +3006,7 @@ ARGV[1..-1].each do |yaml_file|
     framework_roots = []
 
     if conf['header_root']
-        framework_roots[0] = File.expand_path(File.dirname(yaml_file)) + conf['header_root']
+        framework_roots[0] = File.expand_path(File.dirname(yaml_file)) + "/" + conf['header_root']
         header_root = framework_roots[0]
     elsif File.exist?(File.expand_path(File.dirname(yaml_file)) + "/#{framework}.lib/Headers") # RoboPods Library
         framework_roots[0] = File.expand_path(File.dirname(yaml_file))
