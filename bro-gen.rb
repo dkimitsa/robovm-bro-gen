@@ -2842,6 +2842,8 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
                     constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{parameters_s}) { super((SkipInit) null); initObject(#{name}(#{args_s})); }"
                 end
             elsif (static_constructor)
+                # skip retain if ownership is not required as per apple doc
+                skip_retain = name.start_with?('new') || name.start_with?('alloc') || name.start_with?('copy') || name.start_with?('mutableCopy')
                 if conf['throws']
                     args_s2 = param_types[0..-2].map { |p| p[2] }.join(', ')
 
@@ -2850,11 +2852,11 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
                     constructor_lines << "}"
                     constructor_lines << "private#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{new_parameters_s}, #{error_type}.#{error_type}Ptr ptr) throws #{conf['throws']} {"
                     constructor_lines << "   super((Handle) null, #{name}(#{args_s2}, ptr));"
-                    constructor_lines << "   retain(getHandle());"
+                    constructor_lines << "   retain(getHandle());" unless skip_retain
                     constructor_lines << "   if (ptr.get() != null) { throw new #{conf['throws']}(ptr.get()); }"
                     constructor_lines << "}"
                 else
-                    constructor_lines << "#{constructor_visibility}#{generics_s.size>0 ? ' ' + generics_s : ''} #{owner_name}(#{parameters_s}) { super((Handle) null, #{name}(#{args_s})); retain(getHandle()); }"
+                    constructor_lines << "#{constructor_visibility}#{generics_s.size>0 ? ' ' + generics_s : ''} #{owner_name}(#{parameters_s}) { super((Handle) null, #{name}(#{args_s})); #{skip_retain ? '' : "retain(getHandle());"} }"
                 end
             end
         end
