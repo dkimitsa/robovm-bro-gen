@@ -1949,7 +1949,11 @@ module Bro
                 e
             elsif type.kind == :type_typedef
                 if name == 'instancetype' && owner
-                    owner
+                    if owner.is_a?(Bro::ObjCCategory)
+                        resolve_type_by_name(owner.owner)
+                    else
+                        owner
+                    end
                 else
                     td = @typedefs.find { |e| e.name == name }
                     if !td
