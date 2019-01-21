@@ -2255,6 +2255,7 @@ module Bro
                             begin
                                 # FIXME: there is a chance that value under eval will match ruby api module var which
                                 # will cause side efects
+                                value = value[1..-1] if value.start_with?('@"')  # support basic objc strings, e.g. @"abc"
                                 value = eval(value)
                                 @constant_values.push ConstantValue.new self, cursor, value.to_s
                             rescue Exception => e
