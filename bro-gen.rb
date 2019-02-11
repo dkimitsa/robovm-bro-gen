@@ -178,7 +178,7 @@ module Bro
                 else
                     "#{@pointee.java_name}.#{@pointee.java_name}Ptr"
                 end
-            elsif @pointee.is_a?(Struct) || @pointee.is_a?(Typedef) && @pointee.struct || @pointee.is_a?(ObjCClass) || @pointee.is_a?(ObjCProtocol)
+            elsif @pointee.is_a?(Struct) || @pointee.is_a?(Typedef) && @pointee.is_struct? || @pointee.is_a?(ObjCClass) || @pointee.is_a?(ObjCProtocol)
                 @pointee.java_name
             else
                 "#{@pointee.java_name}.#{@pointee.java_name}Ptr"
