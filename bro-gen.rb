@@ -2188,6 +2188,22 @@ module Bro
             lines
         end
 
+        def extract_static_constant_value(cursor)
+            value = nil
+            cursor.visit_children do |cursor, _parent|
+                case cursor.kind
+                when :cursor_obj_c_string_literal
+                    value = cursor.spelling
+                when :cursor_unexposed_expr, :cursor_binary_operator
+                    value = Bro.read_source_range(cursor.extent)
+                end
+
+                next :continue
+            end
+
+            return value
+        end
+
         def process(cursor)
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
@@ -2250,21 +2266,27 @@ module Bro
                         @global_values.push GlobalValue.new self, cursor
                     else
                         # static variable, get value
-                        if src =~ /=(.*?)$/
-                            value = $1.strip
+                        value = extract_static_constant_value(cursor)
+                        if value
+                            const=nil
                             begin
                                 # FIXME: there is a chance that value under eval will match ruby api module var which
                                 # will cause side efects
                                 value = eval(value)
-                                @constant_values.push ConstantValue.new self, cursor, value.to_s
+                                if value.class == String
+                                    const = ConstantValue.new self, cursor, '"' + value + '"', String
+                                else
+                                    const = ConstantValue.new self, cursor, value.to_s
+                                end
                             rescue Exception => e
                                 # check if is a reference to a constant
                                 value = @constant_values.find { |e| e.name == value }
                                 if value
-                                    @constant_values.push ConstantValue.new self, cursor, value.value, value.type
+                                    const = ConstantValue.new self, cursor, value.value, value.type
                                 end
                             end
-                            if value
+                            if const
+                                @constant_values.push const
                                 $stderr.puts "WARN: Turning the global value #{cursor.spelling} into constants"
                             else
                                 $stderr.puts "WARN: Failed to turning the global value #{cursor.spelling} into constants (eval failed)"
