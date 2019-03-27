@@ -562,34 +562,42 @@ module Bro
 
     class StructMember
         attr_accessor :name, :type
-        def initialize(cursor)
-            @name = cursor.spelling
-            @type = cursor.type
+        def initialize(cursor: nil, name: nil, type: nil)
+            if cursor.nil?
+                @name = name
+                @type = type
+            else
+                @name = cursor.spelling
+                @type = cursor.type
+            end
         end
     end
 
     class Struct < Entity
-        attr_accessor :members, :children, :parent, :union
+        attr_accessor :members, :children, :parent, :union, :type
         def initialize(model, cursor, parent = nil, union = false)
             super(model, cursor)
             @name = @name.gsub(/\s*\bconst\b\s*/, '')
             @name = @name.sub(/^(struct|union)\s*/, '')
 
-            @members = []
-            @children = []
+            @type = cursor.type
             @parent = parent
             @union = union
 
+            # parse members and anonymous structs/unions and put everyting into early_members
+            # items will be sorted out after parsing
+            early_members = []
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
                 when :cursor_unexposed_expr, 417
                 # ignored
                 when :cursor_field_decl
-                    @members.push StructMember.new cursor
+                    m = StructMember.new(cursor: cursor)
+                    early_members.push m
                 when :cursor_struct, :cursor_union
+                    # add anonymous struct to be flatten, later it either be flatten or extracted as external
                     s = Struct.new model, cursor, self, cursor.kind == :cursor_union
-                    model.structs.push s
-                    @children.push s
+                    early_members.push s
                 when :cursor_unexposed_attr, :cursor_packed_attr, :cursor_annotate_attr
                     a = Bro.read_attribute(cursor)
                     if a != '?' && model.is_included?(self)
@@ -599,6 +607,51 @@ module Bro
                     raise "Unknown cursor kind #{cursor.kind} in struct at #{Bro.location_to_s(@location)}"
                 end
                 next :continue
+            end
+
+            # process early members and replace anonymous structs/uniions
+            @members = []
+            @children = []
+            # grandchildren - will contain children from child struct. just to keep own children on top of renaming list
+            grandchildren = []
+            idx = 1
+            early_members.each_with_index do |e, i|
+                if e.is_a?(Struct)
+                    if i + 1 < early_members.length && early_members[i + 1].is_a?(StructMember) && Bro::location_to_id(early_members[i + 1].type.declaration.location) == e.id
+                        # next item after this is stuct member that points to this anonymous struct/member
+                        # just extract it to external struct (not subject for embedding)
+                        @children.push e
+                        model.structs.push e
+                    elsif @union || e.union
+                        # for union we can't expand structures into memebers
+                        # as it is not supported at robovm end.
+                        # logicaly we can't expand unions into structs.
+                        # creating an entry for it, struct will be extracted
+                        # into standalone entry
+                        @members.push StructMember.new(name: "autoMember$#{idx}", type:e.type)
+                        @children.push e
+                        model.structs.push e
+                    else
+                        # anonymous struct
+                        # copy all it members
+                        @members.concat(e.members)
+                        # copy all children
+                        grandchildren.concat(e.children)
+                    end
+                else
+                    @members.push e
+                end
+                idx += 1
+            end
+
+            # now attaching name for extracted structures
+            @children.concat(grandchildren)
+            if !@name.nil? && !@name.empty?
+                idx = 1
+                @children.each do |e|
+                    e.name = "#{@name}$InnerStruct$#{idx}"
+                    idx += 1
+                end
             end
         end
 
@@ -1427,8 +1480,7 @@ module Bro
                 end
                 lines << "#{indentation}#{visibility} static native #{java_type} #{java_name}();"
             end
-
-            lines << '}'
+             lines << '}'
         end
 
         private :append_marshalers, :append_constructors, :append_basic_methods, :append_convenience_methods, :append_key_class
@@ -1842,7 +1894,13 @@ module Bro
                     end
                 end
             elsif type.kind == :type_record
-                @structs.find { |e| e.name == name }
+                e = @structs.find { |e| e.name == name }
+                if e.nil?
+                    # anonymous enums got here, try to find it using id
+                    eid = Bro::location_to_id(type.declaration.location)
+                    e = @structs.find { |e| e.id == eid}
+                end
+                e
             elsif type.kind == :type_obj_c_object_pointer
                 name = type.pointee.spelling
                 name = name.gsub(/\s*\bconst\b\s*/, '')
@@ -1999,14 +2057,29 @@ module Bro
                     Bro.builtins_by_type_kind(type.kind)
                 end
             elsif type.kind == 119 # CXType_Elaborated
-                if name.start_with?('struct ')
-                    name = v.sub('struct ', '')
-                elsif name.start_with?('class ')
-                    name = v.sub('class ', '')
+                e = nil
+                name = type.spelling
+                if name.start_with?('struct ') || name.start_with?('union ')
+                    if name.start_with?('struct ')
+                        name = name.sub('struct ', '')
+                    else
+                        name = name.sub('union ', '')
+                    end
+                    e = resolve_type_by_name name
+                    # in case of anonymous we have to find using id
+                    if e.nil?
+                        eid = Bro::location_to_id(type.declaration.location)
+                        e = @structs.find { |e| e.id == eid}
+                    end
                 else
-                    $stderr.puts "WARN: Unknown elaborated type #{name}"
+                    if name.start_with?('class ')
+                        name = name.sub('class ', '')
+                    else
+                        $stderr.puts "WARN: Unknown elaborated type #{name}"
+                    end
+                    e = resolve_type_by_name name
                 end
-                resolve_type_by_name name
+                e
             else
                 # Could still be an enum
                 e = @enums.find { |e| e.name == name }
@@ -2454,10 +2527,6 @@ def struct_to_java(model, data, name, struct, conf)
     members = []
 
     struct.members.each do |e|
-        if e.type.spelling.include? 'union'
-            index += inc
-            next
-        end
         mconf = conf[index] || conf[e.name] || {}
         unless mconf['exclude']
             member_name = mconf['name'] || e.name
@@ -2483,7 +2552,6 @@ def struct_to_java(model, data, name, struct, conf)
         struct.members.map do |e|
             mconf = conf[index] || conf[e.name] || {}
             next if mconf['exclude']
-            next if e.type.spelling.include? 'union'
 
             member_name = mconf['name'] || e.name
             upcase_member_name = member_name.dup
