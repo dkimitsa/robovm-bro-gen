@@ -597,7 +597,14 @@ module Bro
                 when :cursor_struct, :cursor_union
                     # add anonymous struct to be flatten, later it either be flatten or extracted as external
                     s = Struct.new model, cursor, self, cursor.kind == :cursor_union
-                    early_members.push s
+                    if s.name.nil? || s.name.empty?
+                        # inner anonymous struct, might be embedded, save for future processing
+                        early_members.push s
+                    else
+                        # struct with tag, make global available
+                        model.structs.push s
+                    end
+
                 when :cursor_unexposed_attr, :cursor_packed_attr, :cursor_annotate_attr
                     a = Bro.read_attribute(cursor)
                     if a != '?' && model.is_included?(self)
@@ -622,6 +629,8 @@ module Bro
                         # just extract it to external struct (not subject for embedding)
                         @children.push e
                         model.structs.push e
+                        # copy all children
+                        grandchildren.concat(e.children)
                     elsif @union || e.union
                         # for union we can't expand structures into memebers
                         # as it is not supported at robovm end.
@@ -1511,7 +1520,7 @@ module Bro
 
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
-                when :cursor_type_ref, :cursor_integer_literal, :cursor_asm_label_attr, :cursor_obj_c_class_ref, :cursor_obj_c_protocol_ref, :cursor_unexposed_expr, :cursor_struct, :cursor_init_list_expr, :cursor_c_style_cast_expr, :cursor_floating_literal, 417
+                when :cursor_type_ref, :cursor_integer_literal, :cursor_asm_label_attr, :cursor_obj_c_class_ref, :cursor_obj_c_protocol_ref, :cursor_unexposed_expr, :cursor_struct, :cursor_init_list_expr, :cursor_c_style_cast_expr, :cursor_floating_literal, 417, :cursor_parm_decl
                 # Ignored
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
@@ -1875,6 +1884,8 @@ module Bro
             elsif type.kind == :type_pointer
                 if type.pointee.kind == :type_unexposed && name.match(/\(\*\)/)
                     # Callback. libclang does not expose info for callbacks.
+                    Bro.builtins_by_name('FunctionPtr')
+                elsif type.pointee.kind == :type_function_proto
                     Bro.builtins_by_name('FunctionPtr')
                 elsif type.pointee.kind == :type_typedef && type.pointee.declaration.typedef_type.kind == :type_function_proto
                     Bro.builtins_by_name('FunctionPtr')
@@ -2475,7 +2486,7 @@ def dump_ast(cursor, indent)
         if cursor.kind != :cursor_macro_definition && cursor.kind != :cursor_macro_expansion && cursor.kind != :cursor_inclusion_directive
             puts "#{indent}#{cursor.kind} '#{cursor.spelling}' #{cursor.type.kind} '#{cursor.type.spelling}' #{cursor.typedef_type ? cursor.typedef_type.kind : ''} #{Bro.location_to_s(cursor.location)}"
         end
-        dump_ast cursor, "#{indent}  "
+        dump_ast cursor, "#{indent}#{indent}"
         next :continue
     end
 end
