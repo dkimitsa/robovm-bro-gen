@@ -2070,6 +2070,8 @@ module Bro
             elsif type.kind == 119 # CXType_Elaborated
                 e = nil
                 name = type.spelling
+                name = name.gsub(/\s*\bconst\b\s*/, '')
+
                 if name.start_with?('struct ') || name.start_with?('union ')
                     if name.start_with?('struct ')
                         name = name.sub('struct ', '')
@@ -3073,7 +3075,7 @@ end
 
 
 $mac_version = nil
-$ios_version = '12.1'
+$ios_version = '12.2'
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
 sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS#{$ios_version}.sdk"
