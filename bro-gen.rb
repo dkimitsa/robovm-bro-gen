@@ -319,22 +319,27 @@ module Bro
     end
 
     class Builtin < Entity
-        attr_accessor :name, :type_kinds, :java_name
-        def initialize(name, type_kinds = [], java_name = nil)
+        attr_accessor :name, :type_kinds, :java_name, :storage_type
+        def initialize(name, type_kinds = [], java_name = nil, storage_type = nil)
             super(nil, nil)
             @name = name
             @type_kinds = type_kinds
             @java_name = java_name || name
+            @storage_type = storage_type || name
         end
     end
 
     @@builtins = [
         Builtin.new('boolean', [:type_bool]),
-        Builtin.new('byte', [:type_uchar, :type_schar, :type_char_s]),
-        Builtin.new('short', [:type_ushort, :type_short]),
-        Builtin.new('char', [:type_wchar, :type_char16]),
-        Builtin.new('int', [:type_uint, :type_int, :type_char32]),
-        Builtin.new('long', [:type_ulonglong, :type_longlong]),
+        Builtin.new('byte', [:type_uchar], nil, 'unsigned char'),
+        Builtin.new('byte', [:type_schar, :type_char_s], nil, 'signed char'),
+        Builtin.new('short', [:type_short], nil, 'signed short'),
+        Builtin.new('short', [:type_ushort], nil, 'unsigned short'),
+        Builtin.new('char', [:type_wchar, :type_char16], nil, 'unsigned short'),
+        Builtin.new('int', [:type_int], nil, 'signed int'),
+        Builtin.new('int', [:type_uint, :type_char32], nil, 'unsigned int'),
+        Builtin.new('long', [:type_longlong], nil, 'signed long'),
+        Builtin.new('long', [:type_ulonglong], nil, 'unsigned long'),
         Builtin.new('float', [:type_float]),
         Builtin.new('double', [:type_double]),
         Builtin.new('MachineUInt', [:type_ulong], '@MachineSizedUInt long'),
@@ -1602,20 +1607,12 @@ module Bro
     end
 
     class EnumValue < Entity
-        attr_accessor :name, :value, :type, :enum
+        attr_accessor :name, :type, :enum, :raw_value
         def initialize(model, cursor, enum)
             super(model, cursor)
             @name = cursor.spelling
-            @value = cursor.enum_value
+            @raw_value = cursor.enum_value
             @type = cursor.type
-
-            if @type.spelling == 'NSUInteger' && @value == -1
-                # We assume NSUIntegerMax
-                @value = 'Bro.IS_32BIT ? 0xffffffffL : 0xffffffffffffffff'
-            elsif @type.spelling == 'NSInteger' && @value == 0x7fffffffffffffff
-                # We assume NSIntegerMax
-                @value = 'Bro.IS_32BIT ? 0x7fffffffL : 0x7fffffffffffffff'
-            end
 
             @enum = enum
             @java_name = nil
@@ -1650,8 +1647,8 @@ module Bro
                     n = v
                 end
 
-                n = @name[@enum.prefix.size..-1] if n.start_with?(@enum.prefix)
-                n = n[0..(n.size - @enum.suffix.size - 1)] if n.end_with?(@enum.suffix)
+                n = n[@enum.prefix.size..-1] if n.start_with?(@enum.prefix) && n != @enum.prefix
+                n = n[0..(n.size - @enum.suffix.size - 1)] if n.end_with?(@enum.suffix) && n != @enum.suffix
                 n = "_#{n}" if n[0] >= '0' && n[0] <= '9'
                 @java_name = n
                 n
@@ -1660,7 +1657,7 @@ module Bro
     end
 
     class Enum < Entity
-        attr_accessor :values, :type
+        attr_accessor :values, :type, :enum_type
         def initialize(model, cursor)
             super(model, cursor)
             @values = []
@@ -1686,7 +1683,7 @@ module Bro
             end
         end
 
-        def enum_type
+        def java_enum_type
             if enum_conf['type']
                 @model.resolve_type_by_name(enum_conf['type'])
             else
@@ -1774,6 +1771,24 @@ module Bro
         def merge_with
             enum_conf['merge_with']
         end
+
+        # finding low level type of storage type as storage type can be specified as typedef type
+        def raw_storage_type
+            # shell be called once AST parse complete
+            if !@raw_storage_type
+                if enum_conf['type']
+                    t = @model.resolve_type_by_name(enum_conf['type'])                   
+                    t = @model.resolve_typedef(t.typedef_type) if t.is_a?(Typedef)  
+                else
+                    t = @model.resolve_typedef(@enum_type)
+                end
+                # in case of Builtin -- use its name as it was divided into separate entries to deliver
+                # ability to pick information about signed/insigned
+                @raw_storage_type = t.is_a?(Builtin) ? t.storage_type : t.java_name
+            end
+
+            @raw_storage_type
+        end
     end
 
     class Model
@@ -1846,6 +1861,27 @@ module Bro
             end
         end
 
+        # special version to resolve low level typedefs 
+        # it differs from  resolve_type in way that it looks into c-definitions and ignores 
+        # type matching by name (for example when typedef name matches enum generated from anonymous one)
+        def resolve_typedef(type)
+            name = type.spelling
+            if @conf_typedefs[name]
+                return resolve_type_by_name name
+            elsif type.kind == :type_typedef
+                td = @typedefs.find { |e| e.name == name }
+                if td
+                    return resolve_typedef(td.typedef_type)
+                end
+            else
+                e = Bro.builtins_by_type_kind(type.kind)
+                return e if e
+            end
+
+            # check build-ins 
+            return Bro.builtins_by_name(name)
+        end
+
         def resolve_type(type, allow_arrays = false, owner = nil, method = nil, generic: false)
             cache_id = build_type_cache_name(type, generic)
             t = @type_cache[cache_id]
@@ -1896,7 +1932,7 @@ module Bro
                         enum = e.is_a?(Enum) ? e : e.enum
                         if type.pointee.canonical.kind == :type_enum
                             # Pointer to objc_fixed_enum
-                            enum.enum_type.pointer
+                            enum.java_enum_type.pointer
                         else
                             resolve_type(type.pointee.canonical).pointer
                         end
@@ -2084,6 +2120,10 @@ module Bro
                         eid = Bro::location_to_id(type.declaration.location)
                         e = @structs.find { |e| e.id == eid}
                     end
+                elsif name.start_with?('enum ')
+                    name = name.sub('enum ', '')
+                    eid = Bro::location_to_id(type.declaration.location)
+                    e = @enums.find { |e| e.name == name || e.id == eid}
                 else
                     if name.start_with?('class ')
                         name = name.sub('class ', '')
@@ -2278,10 +2318,10 @@ module Bro
             value = nil
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
-                when :cursor_obj_c_string_literal
-                    value = cursor.spelling
+                when :cursor_obj_c_string_literal, :cursor_integer_literal
+                    value = cursor.extent.text
                 when :cursor_unexposed_expr, :cursor_binary_operator
-                    value = Bro.read_source_range(cursor.extent)
+                    value = cursor.extent.text
                 end
 
                 next :continue
@@ -3074,6 +3114,20 @@ def clang_preprocess(header, args)
 end
 
 
+# limits
+UCHAR_MAX = 255
+CHAR_MAX = 127
+CHAR_MIN = (-128)
+USHRT_MAX = 65535
+SHRT_MAX = 32767
+SHRT_MIN = (-32768)
+UINT_MAX = 0xffff_ffff
+INT_MAX = 2147483647
+INT_MIN = (-2147483647-1)
+ULONG_MAX = 0xffff_ffff_ffff_ffff
+LONG_MAX = 0x7fff_ffff_ffff_ffff
+LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
+
 $mac_version = nil
 $ios_version = '12.2'
 $target_platform = 'ios'
@@ -3250,6 +3304,168 @@ ARGV[1..-1].each do |yaml_file|
 
     template_datas = {}
 
+    # enum helpers
+
+    # returns storage type from marshaller
+    def enum_storage_type_from_marshaler(marshaller)
+        return case marshaller
+            when 'ValuedEnum.AsSignedByteMarshaler'       then 'signed char'
+            when 'ValuedEnum.AsUnsignedByteMarshaler'     then 'unsigned char'
+            when 'ValuedEnum.AsSignedShortMarshaler'      then 'signed short'
+            when 'ValuedEnum.AsUnsignedShortMarshaler'    then 'unsigned short'
+            when 'ValuedEnum.AsSignedIntMarshaler'        then 'signed int'
+            when 'ValuedEnum.AsUnsignedIntMarshaler'      then 'unsigned int'
+            when 'ValuedEnum.AsLongMarshaler'             then 'signed long'
+            when 'ValuedEnum.AsMachineSizedSIntMarshaler' then 'MachineSInt'
+            when 'ValuedEnum.AsMachineSizedUIntMarshaler' then 'MachineUInt'
+
+            when 'Bits.AsByteMarshaler'                   then 'unsigned char'
+            when 'Bits.AsShortMarshaler'                  then 'unsigned short'
+            when 'Bits.AsIntMarshaler'                    then 'unsigned int'
+            when 'Bits.AsLongMarshaler'                   then 'unsigned long'
+            when 'Bits.AsMachineSizedIntMarshaler'        then 'MachineUInt'
+            else nil
+        end
+    end
+
+    # finds required marshaler for given storrage type
+    def enum_marshaler_from_storrage_type(storage_type, is_bits)
+        if is_bits == nil || is_bits == false
+            return case storage_type
+                when 'MachineSInt'    then 'ValuedEnum.AsMachineSizedSIntMarshaler'
+                when 'MachineUInt'    then 'ValuedEnum.AsMachineSizedUIntMarshaler'
+                when 'signed char'    then 'ValuedEnum.AsSignedByteMarshaler'
+                when 'unsigned char'  then 'ValuedEnum.AsUnsignedByteMarshaler'
+                when 'signed short'   then 'ValuedEnum.AsSignedShortMarshaler'
+                when 'unsigned short' then 'ValuedEnum.AsUnsignedShortMarshaler'
+                when 'unsigned int'   then 'ValuedEnum.AsUnsignedIntMarshaler'
+                when 'signed long'    then 'ValuedEnum.AsLongMarshaler'
+                when 'unsigned long'  then 'ValuedEnum.AsLongMarshaler'
+                else nil
+            end
+        else
+            return case storage_type
+                when 'MachineSInt', 'MachineUInt'     then 'Bits.AsMachineSizedIntMarshaler'
+                when 'signed char', 'unsigned char'   then 'Bits.AsByteMarshaler'
+                when 'signed short', 'unsigned short' then 'Bits.AsShortMarshaler'
+                when 'signed int', 'unsigned int'     then 'Bits.AsIntMarshaler'
+                when 'signed long', 'unsigned long'   then 'Bits.AsLongMarshaler'
+                else nil
+            end
+        end
+    end
+
+    # returns enum storage type limits
+    def enum_storage_type_limits(enum, storage_type)
+        # find outs ranges depending on storage type
+        # min, max -- natural limits of storage type
+        v_min, v_max = case storage_type
+            #                           min       max
+            when 'MachineSInt'    then [INT_MIN,  INT_MAX]
+            when 'MachineUInt'    then [0,        UINT_MAX]
+            when 'signed char'    then [CHAR_MIN, CHAR_MAX]
+            when 'unsigned char'  then [0,        UCHAR_MAX]
+            when 'signed short'   then [SHRT_MIN, SHRT_MAX]
+            when 'unsigned short' then [0,        USHRT_MAX]
+            when 'signed int'     then [INT_MIN,  INT_MAX]
+            when 'unsigned int'   then [0,        UINT_MAX]
+            when 'signed long'    then [LONG_MIN, LONG_MAX]
+            when 'unsigned long'  then [0,        ULONG_MAX]
+            else raise "Unexpected storage type #{storage_type} for enum #{enum.name}"
+        end
+
+        return [v_min, v_max]
+    end
+
+    # returns true if value fits enum limits
+    def enum_entry_fits_limits(value, storage_type, storage_limits)
+        # handle special corner cases of platform dependant integers
+        if storage_type == 'MachineUInt' && value == ULONG_MAX
+            # We assume NSUIntegerMax
+            return true
+        elsif @type.spelling == 'MachineSInt' && value == LONG_MAX
+            # We assume NSIntegerMax
+            return true
+        elsif @type.spelling == 'MachineSInt' && value == LONG_MIN
+            # We assume NSIntegerMin
+            return true
+        end
+
+        v_min, v_max = storage_type_limits
+        return value >= v_min && value <= v_max
+    end
+
+    # converts negative signed in to unsigned values
+    # as long unsigned are retuned as negative values
+    def enum_normalize_unsigned(value, storage_type)
+        if storage_type == 'MachineUInt' || storage_type == 'unsigned long'
+            value = [value].pack("q").unpack('Q').first
+        elsif storage_type == 'unsigned int'
+            value = [value].pack("l").unpack('L').first
+        elsif storage_type == 'unsigned short'
+            value = [value].pack("s").unpack('S').first
+        elsif storage_type == 'unsigned char'
+            value = [value].pack("c").unpack('C').first
+        end
+        return value
+    end
+
+    # returns sting presentation of entry to be used as java source code
+    def enum_entry_java_value(value, storage_type)
+        # handle special corner cases of platform dependant integers
+        if storage_type == 'MachineUInt' && value == ULONG_MAX
+            # We assume NSUIntegerMax
+            return 'Bro.IS_32BIT ? 0xffffffffL : 0xffffffffffffffffL'
+        elsif storage_type == 'MachineSInt' && value == LONG_MAX
+            # We assume NSIntegerMax
+            return 'Bro.IS_32BIT ? Integer.MAX_VALUE : Long.MAX_VALUE'
+        elsif storage_type == 'MachineSInt' && value == LONG_MIN
+            # We assume NSIntegerMin
+            return 'Bro.IS_32BIT ? Integer.MIN_VALUE : Long.MIN_VALUE'
+        end
+
+        # get data
+        if value > LONG_MAX
+            # ulong case, can't represent it in natural form in java, have to convert into hex
+            return '0x'+ value.to_s(16) + 'L'
+        end
+
+        return value.to_s() + 'L'
+    end
+
+
+    def validate_custom_marshaler(model, enum, enum_storage_type, marshaler, marshaler_storage_type)
+        # if there is typedef mapping to enum that matches same name, probably it is done with NS_ENUM and
+        # in this case we don't need any marshaller
+        java_name = enum.java_name
+        enum_typedef = model.typedefs.find { |e| e.name == enum.name }
+        if enum_typedef && enum_typedef.typedef_type.spelling == "enum #{enum.name}"
+            $stderr.puts "\n\nWARN: Probably enum '#{enum.name}' is defined with 'typedef NS_ENUM/NS_OPTIONS' and not required marshaler"
+        end
+
+        if !marshaler_storage_type
+            $stderr.puts "\n\nWARN: Failed to resolve enum storage type for '#{marshaler}' marshaller in enum '#{enum.name}', use `marshaler_storage_type` to specify one"
+        elsif marshaler_storage_type != enum_storage_type
+            machine_sized_marshaler = false
+            machine_sized_marshaler = true if marshaler_storage_type  =~ /^Machine(.)Int$/
+            machine_sized_storage_type = false
+            machine_sized_storage_type = true if enum_storage_type =~ /^Machine(.)Int$/
+            if machine_sized_marshaler != machine_sized_storage_type
+                #
+                # customs marshalers are used to override enum data type, but there is a common pitfall
+                # when machine size int marshaler is used for stable int size enume (e.g. NSInteger marshaler for int enum)
+                #
+                if machine_sized_marshaler
+                    $stderr.puts "\n\nWARN: enum '#{enum.name}' marshaler '#{marshaler}' is machine size int while enum storage type '#{enum_storage_type}' is not"
+                else
+                    $stderr.puts "\n\nWARN: enum '#{enum.name}' marshaler '#{marshaler}' is not machine size int while enum storage type '#{enum_storage_type}' is"
+                end
+            end
+        else
+            $stderr.puts "\n\nWARN: marshaller for '#{enum.name}' is not required as matches existing type '#{enum_storage_type}'"
+        end
+    end
+
     potential_constant_enums = []
     model.enums.each do |enum|
         next if !enum.is_available? || enum.is_outdated?
@@ -3259,41 +3475,74 @@ ARGV[1..-1].each do |yaml_file|
             java_name = enum.java_name
             bits = enum.is_options? || c['bits']
             ignore = c['ignore']
+            data['name'] = java_name
+
+            # handle marshalers
+            marshaler = nil
+            enum_storage_type = enum.raw_storage_type
+            if c['marshaler']
+                # configured marshaler
+                marshaler = c['marshaler']
+                marshaler_storage_type = c['marshaler_storage_type'] || enum_storage_type_from_marshaler(c['marshaler'])
+                validate_custom_marshaler(model, enum, enum_storage_type, marshaler, marshaler_storage_type)
+            else
+                # attaching marshaler to fit storage type
+
+                if bits
+                    # always convert storage type to same width unsigned
+                    if enum_storage_type.start_with?('signed ')
+                        enum_storage_type = 'un' + enum_storage_type;
+                    elsif enum_storage_type == 'MachineSInt'
+                        enum_storage_type = 'MachineUInt'
+                    end
+
+                    # default marshaler for bits is unsinged int
+                    if enum_storage_type != "unsigned int"
+                        marshaler = enum_marshaler_from_storrage_type(enum_storage_type, bits)                        
+                        raise "Failed to resolve marshaller for enum storage type for '#{enum_storage_type}' in enum '#{enum.name}', use `marshaler' and 'marshaler_storage_type` to specify one" unless marshaler
+                    end
+                else
+                    # default marshaler is ValuedEnum.AsSignedIntMarshaler.class as it attached to ValuedEnum
+                    # it is not completely true as clang has unsigned int as default storage type.
+                    # will try to fit values into signed int just to not attach marshaller
+                    if enum_storage_type == "unsigned int" && enum.values.all?{ |e| e.raw_value >= 0 && e.raw_value <= INT_MAX}
+                        enum_storage_type = "signed int"
+                    end
+
+                    # special case: as OSStatus is defined to be object in corefoundation we can't get its 
+                    # underlying storage type (which is sint32)
+                    if enum_storage_type == 'OSStatus'
+                        enum_storage_type = "signed int"
+                    end
+
+                    # get the marshaller for storage type but, this is not required for enum in case of int type
+                    if enum_storage_type != "signed int"
+                        marshaler = enum_marshaler_from_storrage_type(enum_storage_type, bits)
+                        raise "Failed to resolve marshaller for enum storage type for '#{enum_storage_type}' in enum '#{enum.name}', use `marshaler' and 'marshaler_storage_type` to specify one" unless marshaler
+                    end
+                end
+            end
+
+            # produce values
             if bits
                 values = enum.values.find_all { |e| (!ignore || !e.name.match(ignore)) && !e.is_outdated? && e.is_available? }.map do |e|
-                    model.push_availability(e).push("public static final #{java_name} #{e.java_name} = new #{java_name}(#{e.value}L)").join("\n    ")
+                    value = enum_normalize_unsigned(e.raw_value, enum_storage_type)
+                    java_value = enum_entry_java_value(value, enum_storage_type)
+                    model.push_availability(e).push("public static final #{java_name} #{e.java_name} = new #{java_name}(#{java_value})").join("\n    ")
                 end.join(";\n    ") + ';'
                 if !c['skip_none'] && !enum.values.find { |e| e.java_name == 'None' }
                     values = "public static final #{java_name} None = new #{java_name}(0L);\n    #{values}"
                 end
             else
                 values = enum.values.find_all { |e| (!ignore || !e.name.match(ignore)) && !e.is_outdated? && e.is_available? }.map do |e|
-                    model.push_availability(e).push("#{e.java_name}(#{e.value}L)").join("\n    ")
+                    value = enum_normalize_unsigned(e.raw_value, enum_storage_type)
+                    java_value = enum_entry_java_value(value, enum_storage_type)
+                    model.push_availability(e).push("#{e.java_name}(#{java_value})").join("\n    ")
                 end.join(",\n    ") + ';'
             end
+
             data['values'] = "\n    #{values}\n    "
-            data['name'] = java_name
-            if c['marshaler']
-                data['annotations'] = (data['annotations'] || []).push("@Marshaler(#{c['marshaler']}.class)")
-            else
-                enum_type = enum.enum_type
-                if enum_type.name =~ /^Machine(.)Int$/
-                    if !bits
-                        data['annotations'] = (data['annotations'] || []).push("@Marshaler(ValuedEnum.AsMachineSized#{$1}IntMarshaler.class)")
-                    else
-                        data['annotations'] = (data['annotations'] || []).push('@Marshaler(Bits.AsMachineSizedIntMarshaler.class)')
-                    end
-                else
-                    typedefedas = model.typedefs.find { |e| e.name == java_name }
-                    if typedefedas
-                        if typedefedas.typedef_type.spelling == 'CFIndex'
-                            data['annotations'] = (data['annotations'] || []).push('@Marshaler(ValuedEnum.AsMachineSizedSIntMarshaler.class)')
-                        elsif typedefedas.typedef_type.spelling == 'CFOptionFlags'
-                            data['annotations'] = (data['annotations'] || []).push('@Marshaler(Bits.AsMachineSizedIntMarshaler.class)')
-                        end
-                    end
-                end
-            end
+            data['annotations'] = (data['annotations'] || []).push("@Marshaler(#{marshaler}.class)") if marshaler
             data['imports'] = imports_s
             data['javadoc'] = "\n" + model.push_availability(enum).join("\n") + "\n"
             data['template'] = bits ? def_bits_template : (c['nserror'] == true ? def_nserror_enum_template : def_enum_template)
@@ -3675,7 +3924,7 @@ ARGV[1..-1].each do |yaml_file|
     end
     # Create ConstantValues for values in remaining enums
     potential_constant_enums.each do |enum|
-        type = enum.enum_type.java_name =~ /\blong$/ ? 'long' : 'int'
+        type = enum.java_enum_type.java_name =~ /\blong$/ ? 'long' : 'int'
         enum.type.declaration.visit_children do |cursor, _parent|
             case cursor.kind
             when :cursor_enum_constant_decl
@@ -4146,7 +4395,7 @@ ARGV[1..-1].each do |yaml_file|
                     method_conf = resolve_member_config(model, owner, full_name, member_owner: members_owner, include_protocols: true)
                 end
 
-                a = method_to_java(model, owner_name, owner, m, method_conf || {}, seen, false, members_conf['class'], inherited_initializers)
+            a = method_to_java(model, owner_name, owner, m, method_conf || {}, seen, false, members_conf['class'], inherited_initializers)
                 methods_lines.concat(a[0])
                 constructors_lines.concat(a[1])
 
