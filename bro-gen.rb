@@ -2627,6 +2627,7 @@ def struct_to_java(model, data, name, struct, conf)
 
     data['name'] = name
     data['visibility'] = conf['visibility'] || 'public'
+    data['annotations'] = conf['annotations']
     data['extends'] = "Struct<#{name}>"
     data['ptr'] = "public static class #{name}Ptr extends Ptr<#{name}, #{name}Ptr> {}"
     data['javadoc'] = "\n" + model.push_availability(struct).join("\n") + "\n"
