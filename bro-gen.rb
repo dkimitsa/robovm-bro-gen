@@ -112,7 +112,7 @@ module Bro
             return false if attrib
 
             # check if available
-            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.version != nil  && e.platform == $target_platform }
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.version != nil && (e.platform == nil || e.platform == $target_platform) }
             if attrib
                 # TODO: there is a mess in platforms (macos, ios, tvos, watchos) so checking only ios now
                 $ios_version && attrib.version != -1 && attrib.version <= $ios_version.to_f || false
@@ -125,24 +125,24 @@ module Bro
         def is_outdated?
             if deprecated
                 d_version = deprecated
-                d_version <= @@deprecated_version
+                (d_version > 0 && d_version <= @@deprecated_version) || (d_version < 0 && @model.exclude_deprecated?)
             else
                 false
             end
         end
 
         def since
-            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.version != nil && e.platform == $target_platform }
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.version != nil && (e.platform == nil || e.platform == $target_platform) }
             attrib.version if attrib
         end
 
         def deprecated
-            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.dep_version != nil && e.platform == $target_platform }
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.dep_version != nil && (e.platform == nil || e.platform == $target_platform) }
             attrib.dep_version if attrib
         end
 
         def reason
-            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.dep_message != nil && e.platform == $target_platform }
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.dep_message != nil && (e.platform == nil || e.platform == $target_platform) }
             attrib.dep_message if attrib
         end
 
@@ -392,23 +392,34 @@ module Bro
         attr_accessor :platform, :version, :dep_version, :dep_message
         def initialize(source)
             super(source)
-            source =~ /^availability\((.*)\)/
-            s = $1
-            args = s.scan(/(?:"(?:""|.)*?"(?!")|[^,]+)/)
-            args = args.collect{|x| x.strip || x}
-            @version = nil
-            @dep_version = nil
-            @dep_message = nil
-            @platform = args[0]
-            args[1..-1].each do |v|
-                if v == 'unavailable'
-                    @version = -1
-                elsif v.start_with?('introduced=')
-                    @version = str_to_float(v.sub('introduced=', '').sub('_', '.'))
-                elsif v.start_with?('deprecated=')
-                    @dep_version = str_to_float(v.sub('deprecated=', '').sub('_', '.'))
-                elsif v.start_with?('message="') && v.end_with?('"')
-                    @dep_message = v.sub('message=', '')[0..-1]
+            if source.start_with?('availability')
+                source =~ /^availability\((.*)\)/
+                s = $1
+                args = s.scan(/(?:"(?:""|.)*?"(?!")|[^,]+)/)
+                args = args.collect{|x| x.strip || x}
+                @version = nil
+                @dep_version = nil
+                @dep_message = nil
+                @platform = args[0]
+                args[1..-1].each do |v|
+                    if v == 'unavailable'
+                        @version = -1
+                    elsif v.start_with?('introduced=')
+                        @version = str_to_float(v.sub('introduced=', '').sub('_', '.'))
+                    elsif v.start_with?('deprecated=')
+                        @dep_version = str_to_float(v.sub('deprecated=', '').sub('_', '.'))
+                    elsif v.start_with?('message="') && v.end_with?('"')
+                        @dep_message = v.sub('message=', '')[0..-1]
+                        @dep_message = eval(@dep_message).strip
+                        @dep_message = nil if @dep_message.empty?
+                    end
+                end
+            else
+                # deprecated case 
+                @dep_version = -1
+                if source.start_with?('deprecated(')
+                    # has message 
+                    @dep_message = source.sub('deprecated(', '')[0..-2]
                     @dep_message = eval(@dep_message).strip
                     @dep_message = nil if @dep_message.empty?
                 end
@@ -434,7 +445,7 @@ module Bro
 
     def self.parse_attribute(cursor)
         source = Bro.read_source_range(cursor.extent)
-        if source.start_with?('availability(')
+        if source.start_with?('availability(') || source.start_with?('deprecated(') || source == 'deprecated'
             return AvailableAttribute.new source
         elsif source.start_with?('unavailable')
             return UnavailableAttribute.new source
@@ -1823,6 +1834,11 @@ module Bro
             @type_cache = {}
         end
 
+        def exclude_deprecated?
+            b = @conf["exclude_deprecated"]
+            b != nil && b
+        end
+
         def inspect
             object_id
         end
@@ -2306,11 +2322,12 @@ module Bro
             if since || deprecated
                 lines.push("#{indentation}/**")
                 lines.push("#{indentation} * @since Available in iOS #{since} and later.") if since
-                lines.push("#{indentation} * @deprecated Deprecated in iOS #{deprecated}.") if deprecated && !reason
-                lines.push("#{indentation} * @deprecated Deprecated in iOS #{deprecated}. #{reason}") if deprecated && reason
+                lines.push("#{indentation} * @deprecated Deprecated in iOS #{deprecated}.") if deprecated && deprecated > 0 && !reason
+                lines.push("#{indentation} * @deprecated Deprecated in iOS #{deprecated}. #{reason}") if deprecated && deprecated > 0 && reason
+                lines.push("#{indentation} * @deprecated #{reason}") if deprecated && deprecated < 0 && reason
                 lines.push("#{indentation} */")
-                lines.push("#{indentation}@Deprecated") if deprecated
             end
+            lines.push("#{indentation}@Deprecated") if deprecated
             lines
         end
 
