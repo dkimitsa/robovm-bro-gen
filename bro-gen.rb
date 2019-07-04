@@ -4462,7 +4462,7 @@ ARGV[1..-1].each do |yaml_file|
                 add_potential_new_entry(owner, a[2]) if a.length > 2 && a[2] != nil && a[2].length > 0 && !(members_owner.is_a?(Bro::ObjCProtocol) && owner.is_a?(Bro::ObjCClass))
 
                 # find out if there is visible default constructor
-                has_def_constructor |= full_name == '-init' && !members_conf['exclude']
+                has_def_constructor |= full_name == '-init' && (method_conf == nil || !method_conf['exclude'])
             end
             # TODO: temporaly don't add static properties to interfaces
             members.find_all { |m| m.is_a?(Bro::ObjCProperty) && m.is_available? && !(m.is_static? && owner.is_a?(Bro::ObjCProtocol))}.each do |p|
