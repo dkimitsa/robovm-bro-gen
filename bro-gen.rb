@@ -2910,23 +2910,19 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
                 error_type = 'CFStreamError'
             end
 
-            new_parameters_s = param_types.map { |p| "#{p[0]} #{p[2]}" }[0..-2].join(', ')
-            paramconf = conf['parameters'] || {}
-            params = param_types[0..-2].map do |e|
-                pconf = paramconf[e[2]] || {}
-                (pconf['name'] || e[2]).to_s
-            end
-            params_s = params.length.zero? ? 'ptr' : "#{params.join(', ')}, ptr"
+            throw_parameters_s = param_types.map { |p| "#{p[0]} #{p[2]}" }[0..-2].join(', ')
+            throw_params = param_types[0..-2].map {|e| e[2].to_s }
+            throw_args_s = throw_params.length.zero? ? 'ptr' : "#{throw_params.join(', ')}, ptr"
 
             unless owner.is_a?(Bro::ObjCProtocol) && prot_as_class == false || owner.is_a?(Bro::ObjCClass) && is_init?(owner, method) || static_constructor
                 model.push_availability(method, method_lines)
 
                 method_lines << annotations.to_s if annotations
-                method_lines << "#{[visibility, static, generics_s, ret_type[0], name].find_all { |e| !e.empty? }.join(' ')}(#{new_parameters_s}) throws #{conf['throws']} {"
+                method_lines << "#{[visibility, static, generics_s, ret_type[0], name].find_all { |e| !e.empty? }.join(' ')}(#{throw_parameters_s}) throws #{conf['throws']} {"
                 method_lines << "   #{error_type}.#{error_type}Ptr ptr = new #{error_type}.#{error_type}Ptr();"
                 ret = ret_type[0].gsub(/@[a-zA-Z0-9_().]+ /, '').gsub(/\<.*\> /, '') # Trim annotations
                 ret = ret == 'void' ? '' : "#{ret} result = "
-                method_lines << "   #{ret}#{name}(#{params_s});"
+                method_lines << "   #{ret}#{name}(#{throw_args_s});"
                 method_lines << "   if (ptr.get() != null) { throw new #{conf['throws']}(ptr.get()); }"
                 method_lines << '   return result;' unless ret == ''
                 method_lines << '}'
@@ -2942,7 +2938,7 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
         end
 
         unless inherited_initializers
-            # do not add native method declaration if it is inherited.
+            # do not add native method declaration if it is inherited initializer.
             # constructor will call super
             model.push_availability(method, method_lines)
             method_lines << annotations.to_s if annotations
@@ -2953,8 +2949,8 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
                             end
 
             if owner.is_a?(Bro::ObjCCategory) && method.is_a?(Bro::ObjCClassMethod)
-                new_parameters_s = (['ObjCClass clazz'] + (param_types.map { |p| "#{p[0]} #{p[2]}" })).join(', ')
-                method_lines << "protected static native #{[ret_marshaler, ret_anno, generics_s, ret_type[0], name].find_all { |e| !e.empty? }.join(' ')}(#{new_parameters_s});"
+                cat_parameters_s = (['ObjCClass clazz'] + (param_types.map { |p| "#{p[0]} #{p[2]}" })).join(', ')
+                method_lines << "protected static native #{[ret_marshaler, ret_anno, generics_s, ret_type[0], name].find_all { |e| !e.empty? }.join(' ')}(#{cat_parameters_s});"
                 args_s = (["ObjCClass.getByType(#{owner.owner}.class)"] + (param_types.map { |p| p[2] })).join(', ')
                 body = " { #{ret_type[0] != 'void' ? 'return ' : ''}#{name}(#{args_s}); }"
             end
@@ -2962,7 +2958,37 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
         end
         if owner.is_a?(Bro::ObjCClass) && conf['constructor'] != false && (is_init?(owner, method) || static_constructor)
             constructor_visibility = conf['constructor_visibility'] || 'public'
-            args_s = param_types.map { |p| p[2] }.join(', ')
+
+            # parameters might be requested to be packed in tuple 
+            if conf['arguments_tuple'] != nil        
+                tuple_name = conf['arguments_tuple']
+                # replace parameters with tuple 
+                if conf['throws']
+                    tuple_member_types = param_types[0..-2]
+                    tuple_constructor_params = throw_parameters_s
+                    throw_parameters_s = tuple_name + " tuple"
+                    throw_args_s = inherited_initializers ? "tuple" : param_types[0..-2].map { |p| "tuple." + p[2] }.push('ptr').join(', ')
+                else
+                    tuple_member_types = param_types
+                    tuple_constructor_params = parameters_s
+                    parameters_s = tuple_name + " tuple"
+                    args_s = inherited_initializers ? "tuple" : param_types.map { |p| "tuple." + p[2] }.join(', ')
+                end
+                
+                # add tuple class definition
+                unless inherited_initializers
+                    constructor_lines << ""
+                    constructor_lines << "/** argument tuple for constructor bellow */"
+                    constructor_lines << "public static class #{tuple_name} {"
+                    tuple_member_types.map { |p| "   public final #{p[0]} #{p[2]};" }.each { |line| constructor_lines << line }
+                    constructor_lines << "   public #{tuple_name}(#{tuple_constructor_params}) {"
+                    tuple_member_types.map { |p| "      this.#{p[2]} = #{p[2]};"}.each { |line| constructor_lines << line }
+                    constructor_lines << "   }"
+                    constructor_lines << "}"
+                end
+            else 
+                args_s = param_types.map { |p| p[2] }.join(', ')
+            end
 
             model.push_availability(method, constructor_lines)
             constructor_lines << annotations.to_s if annotations
@@ -2971,10 +2997,10 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
                 # creating static wrapper to call corresponding init
                 constructor_lines << "@Method(selector = \"#{method.name}\")"
                 if conf['throws']
-                    constructor_lines << "#{constructor_visibility} static #{generics_s.size>0 ? ' ' + generics_s : ''} #{owner_name} #{static_constructor_name}(#{new_parameters_s}) throws #{conf['throws']}  {"
+                    constructor_lines << "#{constructor_visibility} static #{generics_s.size>0 ? ' ' + generics_s : ''} #{owner_name} #{static_constructor_name}(#{throw_parameters_s}) throws #{conf['throws']}  {"
                     constructor_lines << "   #{owner_name} res = new #{owner_name}((SkipInit) null);"
                     constructor_lines << "   #{error_type}.#{error_type}Ptr ptr = new #{error_type}.#{error_type}Ptr();"
-                    constructor_lines << "   res.initObject(res.#{name}(#{params_s}));"
+                    constructor_lines << "   res.initObject(res.#{name}(#{throw_args_s}));"
                     constructor_lines << "   if (ptr.get() != null) { throw new #{conf['throws']}(ptr.get()); }"
                     constructor_lines << "   return res;"
                     constructor_lines << "}"
@@ -2993,17 +3019,17 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
               # but it block any possible initialization in super java part
               constructor_lines << "@Method(selector = \"#{method.name}\")"
               if conf['throws']
-                  constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{new_parameters_s}) throws #{conf['throws']} { super(#{params.join(', ')}); }"
+                  constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{throw_parameters_s}) throws #{conf['throws']} { super(#{throw_params.join(', ')}); }"
               else
                   constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{parameters_s}) { super(#{args_s}); }"
               end
             elsif is_init?(owner, method)
                 constructor_lines << "@Method(selector = \"#{method.name}\")"
                 if conf['throws']
-                    constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{new_parameters_s}) throws #{conf['throws']} {"
+                    constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{throw_parameters_s}) throws #{conf['throws']} {"
                     constructor_lines << "   super((SkipInit) null);"
                     constructor_lines << "   #{error_type}.#{error_type}Ptr ptr = new #{error_type}.#{error_type}Ptr();"
-                    constructor_lines << "   long handle = #{name}(#{params_s});"
+                    constructor_lines << "   long handle = #{name}(#{throw_args_s});"
                     constructor_lines << "   if (ptr.get() != null) { throw new #{conf['throws']}(ptr.get()); }"
                     constructor_lines << "   initObject(handle);"
                     constructor_lines << "}"
@@ -3016,10 +3042,10 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
                 if conf['throws']
                     args_s2 = param_types[0..-2].map { |p| p[2] }.join(', ')
 
-                    constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{new_parameters_s}) throws #{conf['throws']} {"
+                    constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{throw_parameters_s}) throws #{conf['throws']} {"
                     constructor_lines << "   this(#{args_s2}, new #{error_type}.#{error_type}Ptr());"
                     constructor_lines << "}"
-                    constructor_lines << "private#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{new_parameters_s}, #{error_type}.#{error_type}Ptr ptr) throws #{conf['throws']} {"
+                    constructor_lines << "private#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{throw_parameters_s}, #{error_type}.#{error_type}Ptr ptr) throws #{conf['throws']} {"
                     constructor_lines << "   super((Handle) null, #{name}(#{args_s2}, ptr));"
                     constructor_lines << "   retain(getHandle());" unless skip_retain
                     constructor_lines << "   if (ptr.get() != null) { throw new #{conf['throws']}(ptr.get()); }"
@@ -4424,7 +4450,7 @@ ARGV[1..-1].each do |yaml_file|
                     method_conf = resolve_member_config(model, owner, full_name, member_owner: members_owner, include_protocols: true)
                 end
 
-            a = method_to_java(model, owner_name, owner, m, method_conf || {}, seen, false, members_conf['class'], inherited_initializers)
+                a = method_to_java(model, owner_name, owner, m, method_conf || {}, seen, false, members_conf['class'], inherited_initializers)
                 methods_lines.concat(a[0])
                 constructors_lines.concat(a[1])
 
