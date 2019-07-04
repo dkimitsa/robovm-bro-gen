@@ -3503,6 +3503,7 @@ ARGV[1..-1].each do |yaml_file|
                 marshaler = c['marshaler']
                 marshaler_storage_type = c['marshaler_storage_type'] || enum_storage_type_from_marshaler(c['marshaler'])
                 validate_custom_marshaler(model, enum, enum_storage_type, marshaler, marshaler_storage_type)
+                enum_storage_type = marshaler_storage_type
             else
                 # attaching marshaler to fit storage type
 
@@ -3544,7 +3545,7 @@ ARGV[1..-1].each do |yaml_file|
             # produce values
             if bits
                 values = enum.values.find_all { |e| (!ignore || !e.name.match(ignore)) && !e.is_outdated? && e.is_available? }.map do |e|
-                    value = enum_normalize_unsigned(e.raw_value, enum_storage_type)
+                    value = enum_normalize_unsigned(e.raw_value, enum.raw_storage_type)
                     java_value = enum_entry_java_value(value, enum_storage_type)
                     model.push_availability(e).push("public static final #{java_name} #{e.java_name} = new #{java_name}(#{java_value})").join("\n    ")
                 end.join(";\n    ") + ';'
@@ -3553,7 +3554,7 @@ ARGV[1..-1].each do |yaml_file|
                 end
             else
                 values = enum.values.find_all { |e| (!ignore || !e.name.match(ignore)) && !e.is_outdated? && e.is_available? }.map do |e|
-                    value = enum_normalize_unsigned(e.raw_value, enum_storage_type)
+                    value = enum_normalize_unsigned(e.raw_value, enum.raw_storage_type)
                     java_value = enum_entry_java_value(value, enum_storage_type)
                     model.push_availability(e).push("#{e.java_name}(#{java_value})").join("\n    ")
                 end.join(",\n    ") + ';'
