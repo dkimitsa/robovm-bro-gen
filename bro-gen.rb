@@ -2335,7 +2335,11 @@ module Bro
             value = nil
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
-                when :cursor_obj_c_string_literal, :cursor_integer_literal
+                when :cursor_obj_c_string_literal
+                    value = cursor.extent.text
+                    # workaround if receive it with @ 
+                    value = value[1..-1] if value.start_with?('@"') && value.end_with?('"')
+                when :cursor_integer_literal
                     value = cursor.extent.text
                 when :cursor_unexposed_expr, :cursor_binary_operator
                     value = cursor.extent.text
