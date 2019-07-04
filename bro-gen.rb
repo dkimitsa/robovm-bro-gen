@@ -2315,11 +2315,11 @@ module Bro
             default
         end
 
-        def push_availability(entity, lines = [], indentation = '')
+        def push_availability(entity, lines = [], indentation = '', annotation_lines: nil)
             since = entity.since
             deprecated = entity.deprecated
             reason = entity.reason
-            if since || deprecated
+            if since || deprecated && (deprecated > 0 || reason)
                 lines.push("#{indentation}/**")
                 lines.push("#{indentation} * @since Available in iOS #{since} and later.") if since
                 lines.push("#{indentation} * @deprecated Deprecated in iOS #{deprecated}.") if deprecated && deprecated > 0 && !reason
@@ -2327,7 +2327,7 @@ module Bro
                 lines.push("#{indentation} * @deprecated #{reason}") if deprecated && deprecated < 0 && reason
                 lines.push("#{indentation} */")
             end
-            lines.push("#{indentation}@Deprecated") if deprecated
+            (annotation_lines != nil ? annotation_lines : lines).push("#{indentation}@Deprecated") if deprecated
             lines
         end
 
@@ -3567,7 +3567,9 @@ ARGV[1..-1].each do |yaml_file|
             data['values'] = "\n    #{values}\n    "
             data['annotations'] = (data['annotations'] || []).push("@Marshaler(#{marshaler}.class)") if marshaler
             data['imports'] = imports_s
-            data['javadoc'] = "\n" + model.push_availability(enum).join("\n") + "\n"
+            availability_annotations = []
+            data['javadoc'] = "\n" + model.push_availability(enum, annotation_lines: availability_annotations).join("\n") + "\n"
+            data['annotations'] = (data['annotations'] || []).concat(availability_annotations) if !availability_annotations.empty?
             data['template'] = bits ? def_bits_template : (c['nserror'] == true ? def_nserror_enum_template : def_enum_template)
             template_datas[java_name] = data
         #      merge_template(target_dir, package, java_name, bits ? def_bits_template : def_enum_template, data)
@@ -3909,12 +3911,12 @@ ARGV[1..-1].each do |yaml_file|
                     pconf = paramconf[e.name] || {}
                     (pconf['name'] || e.name).to_s
                 end
-                params_s = params.length.zero? ? 'ptr' : "#{params.join(', ')}, ptr"
+                throw_args_s = params.length.zero? ? 'ptr' : "#{params.join(', ')}, ptr"
                 lines << "#{visibility} #{static}#{java_ret} #{name}(#{new_parameters_s}) throws #{fconf['throws']} {"
                 lines << "   #{error_type}.#{error_type}Ptr ptr = new #{error_type}.#{error_type}Ptr();"
                 ret = java_ret.gsub(/@\w+ /, '') # Trim annotations
                 ret = ret == 'void' ? '' : "#{ret} result = "
-                lines << "   #{ret}#{name}(#{params_s});"
+                lines << "   #{ret}#{name}(#{throw_args_s});"
                 lines << "   if (ptr.get() != null) { throw new #{fconf['throws']}(ptr.get()); }"
                 lines << '   return result;' if java_ret != 'void'
                 lines << '}'
@@ -4183,7 +4185,9 @@ ARGV[1..-1].each do |yaml_file|
         data['ptr'] = "public static class #{cls.java_name}Ptr extends Ptr<#{cls.java_name}, #{cls.java_name}Ptr> {}"
         data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})").push("@NativeClass#{runtime_name}")
         data['bind'] = "static { ObjCRuntime.bind(#{name}.class); }"
-        data['javadoc'] = "\n" + model.push_availability(cls).join("\n") + "\n"
+        availability_annotations = []
+        data['javadoc'] = "\n" + model.push_availability(cls, annotation_lines: availability_annotations).join("\n") + "\n"
+        data['annotations'] = (data['annotations'] || []).concat(availability_annotations) if !availability_annotations.empty?
         template_datas[name] = data
     end
 
@@ -4208,7 +4212,9 @@ ARGV[1..-1].each do |yaml_file|
             data['template'] = def_protocol_template
         end
         data['imports'] = imports_s
-        data['javadoc'] = "\n" + model.push_availability(prot).join("\n") + "\n"
+        availability_annotations = []
+        data['javadoc'] = "\n" + model.push_availability(prot, annotation_lines: availability_annotations).join("\n") + "\n"
+        data['annotations'] = (data['annotations'] || []).concat(availability_annotations) if !availability_annotations.empty?
         template_datas[name] = data
     end
 
