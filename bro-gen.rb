@@ -2001,6 +2001,7 @@ module Bro
                                 gtype = resolve_type_by_name(g, true)
                                 # dkimitsa: in case it is typedef -- have to expand it till match low level type
                                 gtype = resolve_type(gtype.typedef_type, generic: true) if gtype.is_a?(Typedef) && !@conf_typed_enums[gtype.name]
+                                gtype = resolve_type_by_name(gtype.java_type) if gtype.is_a?(GlobalValueEnumeration) 
                                 valid_generics &= gtype.is_a?(ObjCClass) || gtype.is_a?(Typedef) || gtype.is_a?(Builtin)
                                 break unless valid_generics
                                 generic_types.push(gtype)
