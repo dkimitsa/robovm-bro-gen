@@ -420,10 +420,10 @@ module Bro
                 if source.start_with?('deprecated(')
                     # has message
                     dep_strings = source
-                        .sub(/^deprecated\(+/, '')
-                        .sub(/\)+$/, '')
-                        .split(',')
-                    .map { |it| it.strip.gsub('"', '') }
+                      .sub(/^deprecated\(+/, '')
+                      .sub(/\)+$/, '')
+                      .split(',')
+                      .map { |it| it.strip.gsub('"', '') }
                     @dep_message =
                       case dep_strings.length
                       when 0 then nil
