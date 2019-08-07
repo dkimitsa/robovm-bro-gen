@@ -418,10 +418,19 @@ module Bro
                 # deprecated case 
                 @dep_version = -1
                 if source.start_with?('deprecated(')
-                    # has message 
-                    @dep_message = source.sub('deprecated(', '')[0..-2]
-                    @dep_message = eval(@dep_message).strip
-                    @dep_message = nil if @dep_message.empty?
+                    # has message
+                    dep_strings = source
+                        .sub(/^deprecated\(+/, '')
+                        .sub(/\)+$/, '')
+                        .split(',')
+                    .map { |it| it.strip.gsub('"', '') }
+                    @dep_message =
+                      case dep_strings.length
+                      when 0 then nil
+                      when 1 then dep_strings[0]
+                      when 2 then
+                          if dep_strings[0] == "" then "Use `#{dep_strings[1]}` instead" else dep_strings[0] end
+                      end
                 end
             end
         end
