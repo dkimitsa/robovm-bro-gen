@@ -2601,12 +2601,10 @@ module Bro
     end
 end
 
-def dump_ast(cursor, indent)
+def dump_ast(cursor, indent="")
     cursor.visit_children do |cursor, _parent|
-        if cursor.kind != :cursor_macro_definition && cursor.kind != :cursor_macro_expansion && cursor.kind != :cursor_inclusion_directive
-            puts "#{indent}#{cursor.kind} '#{cursor.spelling}' #{cursor.type.kind} '#{cursor.type.spelling}' #{cursor.typedef_type ? cursor.typedef_type.kind : ''} #{Bro.location_to_s(cursor.location)}"
-        end
-        dump_ast cursor, "#{indent}#{indent}"
+        puts "#{indent}#{cursor.kind} '#{cursor.spelling}' #{cursor.type.kind} '#{cursor.type.spelling}' #{cursor.typedef_type ? cursor.typedef_type.kind : ''}"
+        dump_ast cursor, "#{indent}    "
         next :continue
     end
 end
