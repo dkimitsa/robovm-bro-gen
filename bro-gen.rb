@@ -2374,6 +2374,7 @@ module Bro
         def push_availability(entity, lines = [], indentation = '', annotation_lines: nil)
             since = entity.since
             deprecated = entity.deprecated
+            deprecated = -1 if deprecated && deprecated > $ios_version.to_f # in case of API_TO_BE_DEPRECATED
             reason = entity.reason
             if since || deprecated && (deprecated > 0 || reason)
                 lines.push("#{indentation}/**")
