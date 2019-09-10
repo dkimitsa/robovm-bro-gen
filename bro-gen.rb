@@ -832,8 +832,8 @@ module Bro
                 case cursor.kind
                 when :cursor_type_ref, :cursor_parm_decl, :cursor_obj_c_class_ref, :cursor_obj_c_protocol_ref, :cursor_obj_c_instance_method_decl, :cursor_iboutlet_attr, :cursor_annotate_attr, :cursor_unexposed_expr
                     # Ignored
-                # when 417
-                #     # ignored CXCursor_VisibilityAttr = 417,
+                when 417
+                    # ignored CXCursor_VisibilityAttr = 417,
                 when 429
                     # ignored CXCursor_ObjCReturnsInnerPointer = 429
                     # @property (readonly) const char *objCType __attribute__((objc_returns_inner_pointer));
