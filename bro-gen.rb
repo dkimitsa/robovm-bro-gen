@@ -900,14 +900,61 @@ module Bro
         end
     end
 
+    class ObjCTemplateParam < Entity
+        attr_accessor :owner, :typedef_type
+        def initialize(model, cursor, owner)
+            super(model, cursor)
+            @owner = owner
+            @typedef_type = cursor.typedef_type
+        end
+
+        def java_name
+            if !@java_name
+                # check for configured first 
+                @java_name = ((@model.get_class_conf(owner.name) || {})['template_parameters'] || {})[name]
+                if !@java_name
+                    # replace known values 
+                    if name == "ObjectType"
+                        @java_name = "T"
+                    elsif name == "KeyType"
+                        @java_name = "K"
+                    else 
+                        @java_name = name
+                    end
+                end
+            end
+            @java_name
+        end
+
+        def extend_type
+            if !@extend_type
+                @extend_type = @model.resolve_type(@owner, @typedef_type)
+            end
+            @extend_type
+        end
+
+        def extend_java_type
+            # if template arg type is a protocol -- need to extend it from NSObject as well, otherwise it 
+            # will not go to containers such as NSArray
+            e = extend_type
+            if e.is_a?(ObjCProtocol)
+                "NSObject & #{e.java_name}" 
+            else
+                e.java_name
+            end
+        end
+    end
+
     class ObjCClass < ObjCMemberHost
-        attr_accessor :superclass, :protocols, :instance_vars, :class_vars
+        attr_accessor :superclass, :protocols, :instance_vars, :class_vars, :template_params, :super_template_args
         def initialize(model, cursor)
             super(model, cursor)
             @superclass = nil
             @protocols = []
             @instance_vars = []
             @class_vars = []
+            @template_params = []
+            @super_template_args = nil
             if cursor.kind == :cursor_obj_c_class_ref
                 @opaque = true
                 return
@@ -934,6 +981,8 @@ module Bro
                 when :cursor_obj_c_class_ref
                     @opaque = false if generic_fix
                     @opaque = @name == cursor.spelling unless generic_fix
+                when :cursor_template_type_parameter
+                    @template_params.push ObjCTemplateParam.new(model, cursor, self)
                 when :cursor_obj_c_super_class_ref
                     generic_fix = true
                     @superclass = cursor.spelling
@@ -961,6 +1010,18 @@ module Bro
                 end
                 next :continue
             end
+
+            # pick up super class template argument
+            # it is not available trough FFI so get declaration source code and fetch from 
+            # there 
+            # PS: but these could be also protocols, so will filter it out later 
+            if !@opaque && @superclass
+                t = cursor.extent.text.split(" ").join("")
+                if t =~ /^@interface#{@name}(<.*?>)?:#{superclass}<(.*?)>/
+                    @super_template_args = $2
+                end
+            end
+
             resolve_property_accessors
         end
 
@@ -1032,10 +1093,11 @@ module Bro
     end
 
     class ObjCCategory < ObjCMemberHost
-        attr_accessor :owner, :protocols
+        attr_accessor :owner, :protocols, :template_params
         def initialize(model, cursor)
             super(model, cursor)
             @protocols = []
+            @template_params = []
             @owner = nil
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
@@ -1043,6 +1105,8 @@ module Bro
                     # ignored
                 when :cursor_obj_c_class_ref
                     @owner = cursor.spelling
+                when :cursor_template_type_parameter
+                    @template_params.push ObjCTemplateParam.new(model, cursor, self)
                 when :cursor_obj_c_protocol_ref
                     @protocols.push(cursor.spelling)
                 when :cursor_obj_c_instance_method_decl
@@ -1083,7 +1147,7 @@ module Bro
             @enum = enum
             @type = first.type
             vconf = first.conf
-            @java_type = vconf['type'] || @model.to_java_type(@model.resolve_type(@type))
+            @java_type = vconf['type'] || @model.to_java_type(@model.resolve_type(self, @type))
             @mutable = vconf['mutable'].nil? ? true : vconf['mutable']
             @methods = vconf['methods']
             @generate_marshalers = vconf['marshalers'] || true
@@ -1548,7 +1612,7 @@ module Bro
 
                 indentation = '    '
                 java_name = v.java_name()
-                java_type = vconf['type'] || @model.to_java_type(@model.resolve_type(v.type, true))
+                java_type = vconf['type'] || @model.to_java_type(@model.resolve_type(self, v.type, true))
                 visibility = vconf['visibility'] || 'public'
 
                 @model.push_availability(v, lines, indentation)
@@ -1572,7 +1636,7 @@ module Bro
             @name = name
             @type = first.type
             vconf = first.conf
-            @java_type = vconf['type'] || model.to_java_type(model.resolve_type(@type, true))
+            @java_type = vconf['type'] || model.to_java_type(model.resolve_type(self, @type, true))
             @extends = vconf['enum_extends'] || vconf['extends']
             @values = [first]
         end
@@ -1764,7 +1828,7 @@ module Bro
                 @model.resolve_type_by_name(enum_conf['type'])
             else
                 # If this is a named enum (objc_fixed_enum) we take the enum int type from the first value
-                @enum_type.kind == :type_enum ? @model.resolve_type(@values.first.type.canonical) : @model.resolve_type(@enum_type)
+                @enum_type.kind == :type_enum ? @model.resolve_type(self, @values.first.type.canonical) : @model.resolve_type(self, @enum_type)
             end
         end
 
@@ -1930,12 +1994,12 @@ module Bro
             e || (orig_name != name ? Builtin.new(name) : nil)
         end
 
-        def build_type_cache_name(type, generic)
-            if type.kind == :type_typedef && !@typedefs.find { |e| e.name == type.spelling } && type.declaration.kind == :cursor_template_type_parameter
-                # use lexical parent to as prefix to cache's key otherwise there will be wrong types picked up under same template type name
-                return type.declaration.lexical_parent.spelling.to_s + "." + type.spelling
-            end
-            if generic
+        def build_type_cache_name(owner, type, generic)
+            if owner && type.kind == :type_typedef && !@typedefs.find { |e| e.name == type.spelling } && type.declaration.kind == :cursor_template_type_parameter
+                return owner.name + "." + type.spelling
+            elsif owner && type.spelling.include?("<")
+                owner.name + "." + type.spelling
+            elsif generic
                 type.spelling + ".<generic>"
             else
                 type.spelling
@@ -1963,11 +2027,63 @@ module Bro
             return Bro.builtins_by_name(name)
         end
 
-        def resolve_type(type, allow_arrays = false, owner = nil, method = nil, generic: false)
-            cache_id = build_type_cache_name(type, generic)
+        def resolve_template_params(owner, generic_name, allow_dict_wrapper = false)
+            valid_generics = false
+            template_params = []
+            template_params = owner.template_params if owner && (owner.is_a?(Bro::ObjCClass) || owner.is_a?(Bro::ObjCCategory))
+
+            # work with generics, drop pointers if any 
+            generic_name = generic_name.tr('* ', '').sub(/__kindof/, '').sub(/id<(.*)>/, '\1')
+            generics = generic_name.split(',')
+            generic_types = []
+            generics.each do |g|
+                gtype = template_params.find {|n| n.name == g}
+                if (gtype)
+                    # its template param of this class 
+                    valid_generics = true
+                    generic_types.push(gtype)
+                    next
+                end
+
+                # not template param, resolve by name 
+                valid_generics = ['NSCopying', 'Class', '<', '>'].all? { |n| !g.include? n }
+                break unless valid_generics
+
+                if (g == 'id' || g == "NSObject")
+                    generic_types.push(Builtin.new("?"))
+                else
+                    gtype = resolve_type_by_name(g, true)
+                    if gtype.is_a?(Typedef)
+                       # in case it is typedef -- expand it to bottom type or replace with typed enum types 
+                        conf = @conf_typed_enums[gtype.name]
+                        if conf 
+                            # typed enum/dict case 
+                            if conf["enum"]
+                                gtype = resolve_type_by_name(conf["enum"])
+                            else
+                                gtype = resolve_type_by_name(conf["dictionary"])
+                            end
+                        else
+                            gtype = resolve_type(owner, gtype.typedef_type, generic: true)
+                        end
+                    end
+                    # expand value enum/dictionary to container class (as these are not subclass of NSObject and will fail to compile on containers)
+                    gtype = resolve_type_by_name(gtype.java_type) if gtype.is_a?(GlobalValueEnumeration) 
+                    gtype = resolve_type_by_name(gtype.java_type) if gtype.is_a?(GlobalValueDictionaryWrapper) && !allow_dict_wrapper
+                    valid_generics = gtype.is_a?(ObjCClass) || gtype.is_a?(Typedef) || gtype.is_a?(Builtin) || (allow_dict_wrapper && gtype.is_a?(GlobalValueDictionaryWrapper))
+                    break unless valid_generics
+                    generic_types.push(gtype)
+                end
+            end
+
+            valid_generics ? generic_types : nil
+        end
+
+        def resolve_type(owner, type, allow_arrays = false, method = nil, generic: false)
+            cache_id = build_type_cache_name(owner, type, generic)
             t = @type_cache[cache_id]
             unless t
-                t = resolve_type0(type, allow_arrays, owner, method, generic)
+                t = resolve_type0(owner, type, allow_arrays, method, generic)
                 raise "Failed to resolve type '#{type.spelling}' with kind #{type.kind} defined at #{Bro.location_to_s(type.declaration.location)}" unless t
                 if t.is_a?(Typedef) && t.is_callback?
                     # Callback.
@@ -1978,7 +2094,7 @@ module Bro
             t
         end
 
-        def resolve_type0(type, allow_arrays = false, owner = nil, _method = nil, _generic = false)
+        def resolve_type0(owner, type, allow_arrays = false, _method = nil, _generic = false)
             return Bro.builtins_by_type_kind(:type_void) unless type
             name = type.spelling
             name = name.gsub(/\s*\bconst\b\s*/, '')
@@ -2006,8 +2122,12 @@ module Bro
                     Bro.builtins_by_name('FunctionPtr')
                 elsif type.pointee.kind == :type_typedef && type.pointee.declaration.typedef_type.kind == :type_function_proto
                     Bro.builtins_by_name('FunctionPtr')
+                elsif type.pointee.kind == :type_typedef && type.pointee.declaration.kind == :cursor_template_type_parameter
+                    # pointer to tempalte param, return as template type itself. E.g. '-(T*) foo'
+                    e = resolve_type(owner, type.pointee)
+                    e
                 else
-                    e = resolve_type(type.pointee)
+                    e = resolve_type(owner, type.pointee)
                     if e.is_a?(Enum) || e.is_a?(Typedef) && e.is_enum?
                         # Pointer to enum. Use an appropriate integer pointer (e.g. IntPtr)
                         enum = e.is_a?(Enum) ? e : e.enum
@@ -2015,7 +2135,7 @@ module Bro
                             # Pointer to objc_fixed_enum
                             enum.java_enum_type.pointer
                         else
-                            resolve_type(type.pointee.canonical).pointer
+                            resolve_type(owner, type.pointee.canonical).pointer
                         end
                     else
                         e.pointer
@@ -2050,31 +2170,26 @@ module Bro
                     type_name = $1
                     generic_name = $2.tr('* ', '').sub(/__kindof/, '').sub(/id<(.*)>/, '\1')
 
+                    generic_types = nil
                     e = resolve_type_by_name(type_name)
-                    valid_generics = false
                     if e && e.pointer
-                        # work with generics
-                        generics = generic_name.split(',')
-                        generic_types = []
-                        generics.each do |g|
-                            valid_generics = ['NSCopying', 'KeyType', 'ObjectType', 'Class', '<', '>'].all? { |n| !g.include? n }
-                            break unless valid_generics
-
-                            if (g == 'id' || g == "NSObject")
-                                generic_types.push(Builtin.new("?"))
-                            else
-                                gtype = resolve_type_by_name(g, true)
-                                # dkimitsa: in case it is typedef -- have to expand it till match low level type
-                                gtype = resolve_type(gtype.typedef_type, generic: true) if gtype.is_a?(Typedef) && !@conf_typed_enums[gtype.name]
-                                gtype = resolve_type_by_name(gtype.java_type) if gtype.is_a?(GlobalValueEnumeration) 
-                                valid_generics &= gtype.is_a?(ObjCClass) || gtype.is_a?(Typedef) || gtype.is_a?(Builtin)
-                                break unless valid_generics
-                                generic_types.push(gtype)
+                        java_type = nil
+                        # dkimitsa:
+                        # special case: replacing NSDictionary<NS_TYPED_ENUM, ? > to
+                        # typed_enum#dict if such is found
+                        if type_name == "NSDictionary" 
+                            gt = resolve_template_params(owner, generic_name, true)
+                            if gt && gt.length == 2 && gt[1].java_name == "?" && gt[0].is_a?(GlobalValueDictionaryWrapper)
+                                # replace with dictionary wrapper 
+                                return gt[0]
                             end
                         end
+        
+                        # proceed common generic way 
+                        generic_types = resolve_template_params(owner, generic_name)
                     end
 
-                    if valid_generics
+                    if generic_types
                         [e] + generic_types
                     else
                         if @conf_typedefs[gen_name]
@@ -2141,25 +2256,32 @@ module Bro
                     else
                         owner
                     end
+                elsif type.declaration.kind == :cursor_template_type_parameter
+                    # Find template parameter in objc class 
+                    e = nil
+                    if owner && (owner.is_a?(Bro::ObjCClass) || owner.is_a?(Bro::ObjCCategory))
+                        e = owner.template_params.find { |e| e.name == name }
+                    end
+                    e
                 else
                     td = @typedefs.find { |e| e.name == name }
                     if !td
                         if type.declaration.kind == :cursor_template_type_parameter
-                            resolve_type(type.declaration.underlying_type)
+                            resolve_type(owner, type.declaration.underlying_type)
                         else
                             # Check builtins for builtin typedefs like va_list
                             Bro.builtins_by_name(name)
                         end
                     else
                         if td.typedef_type.kind == :type_block_pointer
-                            resolve_type(td.typedef_type)
+                            resolve_type(owner, td.typedef_type)
                         elsif td.is_callback? || td.is_struct?
                             td
                         elsif get_class_conf(td.name)
                             td
                         else
                             e = @enums.find { |e| e.name == name || e.id == td.id}
-                            e || resolve_type(td.typedef_type)
+                            e || resolve_type(owner, td.typedef_type)
                         end
                     end
                 end
@@ -2171,15 +2293,15 @@ module Bro
                     base_type = base_type.element_type
                 end
                 if allow_arrays
-                    Array.new(resolve_type(base_type), dimensions)
+                    Array.new(resolve_type(owner, base_type), dimensions)
                 else
                     # Marshal as pointer
-                    (1..dimensions.size).inject(resolve_type(base_type)) { |t, _i| t.pointer }
+                    (1..dimensions.size).inject(resolve_type(owner, base_type)) { |t, _i| t.pointer }
                 end
             elsif type.kind == :type_block_pointer
                 begin
-                    ret_type = resolve_type(type.pointee.result_type)
-                    param_types = (0..type.pointee.num_arg_types-1).map { |idx| resolve_type(type.pointee.arg_type(idx), generic: true)}
+                    ret_type = resolve_type(owner, type.pointee.result_type)
+                    param_types = (0..type.pointee.num_arg_types-1).map { |idx| resolve_type(owner, type.pointee.arg_type(idx), generic: true)}
                     Block.new(self, ret_type, param_types)
                 rescue => e
                     $stderr.puts "WARN: Unknown block type #{name}. Using ObjCBlock. Failed to convert due: #{e}"
@@ -2307,16 +2429,7 @@ module Bro
             elsif type.is_a?(Array)
                 "@Array({#{type.dimensions.join(', ')}}) #{type.java_name}"
             elsif type.respond_to?('each') # Generic type
-                java_type = nil
-                # dkimitsa:
-                # special case: replacing NSDictionary<NS_TYPED_ENUM, ? > to
-                # typed_enum#dict if such is found
-                if type.length == 3 && type[0].java_name == "NSDictionary" && type[2].java_name == "?"
-                    # check configuration
-                    tconf = conf_typed_enums[type[1].java_name]
-                    java_type = tconf["dictionary"] if tconf
-                end
-                java_type || "#{type[0].java_name}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
+                "#{type[0].java_name}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
             else
                 type.java_name
              end
@@ -2673,7 +2786,7 @@ def struct_to_java(model, data, name, struct, conf)
             upcase_member_name[0] = upcase_member_name[0].capitalize
 
             visibility = mconf['visibility'] || 'public'
-            type = mconf['type'] || model.to_java_type(model.resolve_type(e.type, true))
+            type = mconf['type'] || model.to_java_type(model.resolve_type(struct, e.type, true))
             getter = type == 'boolean' ? 'is' : 'get'
 
             members << "@StructMember(#{index}) #{visibility} native #{type} #{getter}#{upcase_member_name}();"
@@ -2699,7 +2812,7 @@ def struct_to_java(model, data, name, struct, conf)
             visibility = mconf['visibility'] || 'public'
             next unless visibility == 'public'
             type = mconf['type']
-            type = type ? type.sub(/^(@ByVal|@Array.*)\s+/, '') : model.resolve_type(e.type, true).java_name
+            type = type ? type.sub(/^(@ByVal|@Array.*)\s+/, '') : model.resolve_type(struct,e.type, true).java_name
             constructor_params.push "#{type} #{member_name}"
             constructor_body.push "this.set#{upcase_member_name}(#{member_name});"
         end.join("\n    ")
@@ -2750,7 +2863,7 @@ def get_generic_type(model, owner, method, type, index, conf_type, name = nil)
             # init method return type should always be '@Pointer long'
             [Bro.builtins_by_name('Pointer').java_name, nil, name, nil]
         else
-            resolved_type = model.resolve_type(type, false, owner, method)
+            resolved_type = model.resolve_type(owner, type, false, method)
             java_type = model.to_java_type(resolved_type)
             resolved_type.is_a?(Bro::ObjCId) && ["T#{index}", "T#{index} extends Object & #{java_type}", name, resolved_type] || [java_type, nil, name, resolved_type]
         end
@@ -3722,7 +3835,7 @@ ARGV[1..-1].each do |yaml_file|
         methods_s = vals.map do |(v, vconf)|
             lines = []
             java_name = v.java_name()
-            java_type = vconf['type'] || model.to_java_type(model.resolve_type(v.type, true))
+            java_type = vconf['type'] || model.to_java_type(model.resolve_type(owner, v.type, true))
             visibility = vconf['visibility'] || 'public'
 
             # static class grouping support
@@ -3867,7 +3980,7 @@ ARGV[1..-1].each do |yaml_file|
             java_name = v.java_name()
 
             names.push(java_name)
-            java_type = vconf['type'] || model.to_java_type(model.resolve_type(v.type, true))
+            java_type = vconf['type'] || model.to_java_type(model.resolve_type(e, v.type, true))
             java_type = 'int' if java_type == 'Integer'
             visibility = vconf['visibility'] || 'public'
 
@@ -3946,16 +4059,16 @@ ARGV[1..-1].each do |yaml_file|
 
             annotations = fconf['annotations'] && !fconf['annotations'].empty? ? fconf['annotations'].uniq.join(' ') : nil
 
-            if !fconf['static'] && parameters.size >= 1 && (firstparamtype == owner || model.resolve_type(parameters[0].type).java_name == owner)
+            if !fconf['static'] && parameters.size >= 1 && (firstparamtype == owner || model.resolve_type(nil, parameters[0].type).java_name == owner)
                 # Instance method
-                java_type = model.to_java_type(model.resolve_type(parameters[0].type))
+                java_type = model.to_java_type(model.resolve_type(nil, parameters[0].type))
                 if !firstparamtype && java_type.include?('@ByVal')
                     # If the instance is passed @ByVal we need to make a wrapper method and keep the @Bridge method static
-                    java_ret = fconf['return_type'] || model.resolve_type(f.return_type).java_name
+                    java_ret = fconf['return_type'] || model.resolve_type(owner, f.return_type).java_name
                     java_parameters = parameters[1..-1].map do |e|
                         pconf = paramconf[e.name] || {}
                         marshaler = pconf['marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{pconf['marshaler']}.class) " : ''
-                        "#{marshaler}#{pconf['type'] || model.resolve_type(e.type).java_name} #{pconf['name'] || e.name}"
+                        "#{marshaler}#{pconf['type'] || model.resolve_type(nil, e.type).java_name} #{pconf['name'] || e.name}"
                     end
                     args = parameters[1..-1].map do |e|
                         pconf = paramconf[e.name] || {}
@@ -3980,11 +4093,11 @@ ARGV[1..-1].each do |yaml_file|
                 java_ret_marshaler = ''
             end
 
-            java_ret = fconf['return_type'] || model.to_java_type(model.resolve_type(f.return_type))
+            java_ret = fconf['return_type'] || model.to_java_type(model.resolve_type(nil, f.return_type))
             java_parameters = parameters.map do |e|
                 pconf = paramconf[e.name] || {}
                 marshaler = pconf['marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{pconf['marshaler']}.class) " : ''
-                "#{marshaler}#{pconf['type'] || model.to_java_type(model.resolve_type(e.type))} #{pconf['name'] || e.name}"
+                "#{marshaler}#{pconf['type'] || model.to_java_type(model.resolve_type(nil, e.type))} #{pconf['name'] || e.name}"
             end
 
             if fconf['throws']
@@ -4271,12 +4384,31 @@ ARGV[1..-1].each do |yaml_file|
         runtime_name = cls.valueAttributeForKey("objc_runtime_name")
         runtime_name = "(\"#{runtime_name}\")" if runtime_name
         data = template_datas[name] || {}
-        data['name'] = name
+        if cls.template_params.empty?
+            data['name'] = name
+            data['ptr'] = "public static class #{cls.java_name}Ptr extends Ptr<#{cls.java_name}, #{cls.java_name}Ptr> {}"
+        else
+            # add generic definitions from template params
+            param_decl = "<" + cls.template_params.map{|e| "#{e.java_name} extends #{e.extend_java_type}"}.join(", ") + ">"
+            param_list = "<" + cls.template_params.map{|e| e.java_name}.join(", ") + ">"
+            data['name'] = name + param_decl
+            data['ptr'] = "public static class #{cls.java_name}Ptr#{param_decl} extends Ptr<#{cls.java_name}#{param_list}, #{cls.java_name}Ptr#{param_list}> {}"
+        end
         data['visibility'] = c['visibility'] || 'public'
         data['extends'] = c['extends'] || (cls.superclass && (model.conf_classes[cls.superclass] || {})['name'] || cls.superclass) || 'ObjCObject'
+        # generics: adding template arguments to inherited class 
+        # FIXME: add option to supres
+        if cls.superclass && cls.super_template_args
+            super_cls = model.objc_classes.find{ |e| e.name == cls.superclass}
+            if super_cls && !super_cls.template_params.empty?
+                template_args = model.resolve_template_params(cls, cls.super_template_args)
+                if template_args && template_args.size == super_cls.template_params.size
+                    data['extends'] = data['extends'] + "<" + template_args.map{|e| e.java_name}.join(", ") + ">"
+                end
+            end
+        end
         data['imports'] = imports_s
         data['implements'] = protocol_list_s(model, 'implements', cls.protocols, c)
-        data['ptr'] = "public static class #{cls.java_name}Ptr extends Ptr<#{cls.java_name}, #{cls.java_name}Ptr> {}"
         data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})").push("@NativeClass#{runtime_name}")
         data['bind'] = "static { ObjCRuntime.bind(#{name}.class); }"
         availability_annotations = []
@@ -4539,7 +4671,7 @@ ARGV[1..-1].each do |yaml_file|
         end
 
         data = template_datas[owner_name] || {}
-        data['name'] = owner_name
+        data['name'] = data['name'] || owner_name
         if owner.is_a?(Bro::ObjCClass)
             unless owner_conf['skip_skip_init_constructor']
                 constructors_lines.unshift("protected #{owner_name}(SkipInit skipInit) { super(skipInit); }")
