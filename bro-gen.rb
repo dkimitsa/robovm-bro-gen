@@ -4044,14 +4044,17 @@ ARGV[1..-1].each do |yaml_file|
         enum.type.declaration.visit_children do |cursor, _parent|
             case cursor.kind
             when :cursor_enum_constant_decl
-                name = cursor.spelling
-                value = cursor.enum_value
-                value = "#{value}L" if type == 'long'
-                c = model.get_constant_conf(name)
-                if c && !c['exclude']
-                    owner = c['class'] || default_class
-                    v = Bro::ConstantValue.new model, cursor, value, type
-                    constants[owner] = (constants[owner] || []).push([v, c])
+                e = Bro::EnumValue.new model, cursor, enum
+                if e.is_available?
+                    name = e.name
+                    value = e.raw_value
+                    value = "#{value}L" if type == 'long'
+                    c = model.get_constant_conf(name)
+                    if c && !c['exclude']
+                        owner = c['class'] || default_class
+                        v = Bro::ConstantValue.new model, cursor, value, type
+                        constants[owner] = (constants[owner] || []).push([v, c])
+                    end
                 end
             end
             next :continue
