@@ -1313,6 +1313,10 @@ module Bro
                          else
                              "return #{resolved_type.name}.valueOf(val.longValue());"
                          end
+                elsif resolved_type == nil && type_hint == 'Enum'
+                    # there is no direct reference for this type through includes, assume it is enum
+                    s << "NSNumber val = (NSNumber) get(#{key_accessor});"
+                    s << "return #{name}.valueOf(val.longValue());"
                 elsif resolved_type.is_a?(Struct) || type_hint == 'Struct'
                     if type == 'CGRect' || type == 'CGSize' || type == 'CGAffineTransform' || type == 'NSRange' || type == 'UIEdgeInsets'
                         valueShort = type[2..-1]
@@ -1451,7 +1455,7 @@ module Bro
                     end
                 elsif resolved_type.is_a?(GlobalValueDictionaryWrapper) || type_hint == 'GlobalValueDictionaryWrapper'
                     s = "#{param_name}.getDictionary()"
-                elsif resolved_type.is_a?(Enum)
+                elsif resolved_type.is_a?(Enum) || type_hint == 'Enum'
                     s = "NSNumber.valueOf(#{param_name}.value())"
                 elsif resolved_type.is_a?(Struct) || type_hint == 'Struct'
                     if type == 'CGRect' || type == 'CGSize' || type == 'CGAffineTransform' || type == 'NSRange' || type == 'UIEdgeInsets'
