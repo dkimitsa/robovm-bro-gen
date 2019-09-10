@@ -1580,7 +1580,13 @@ module Bro
             super(model, cursor)
             @type = cursor.type
 
-            @conf = model.get_typed_enum_conf(@type) || model.get_value_conf(name)
+            @conf = model.get_typed_enum_conf(@type) 
+            if @conf
+                # picks configuration from typed_enum for global value as well to apply name transformation etc 
+                c = model.get_conf_for_key(@name, @conf)
+                @conf = @conf.merge(c) if c
+            end
+            @conf ||= model.get_value_conf(name)
             @enum = @conf ? @conf['enum'] : nil
             @dictionary = @conf ? @conf['dictionary'] : nil
 
