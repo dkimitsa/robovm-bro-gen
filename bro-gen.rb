@@ -4174,7 +4174,7 @@ ARGV[1..-1].each do |yaml_file|
             (conf['protocols'] || cls.protocols).each do |prot_name|
                 prot = model.objc_protocols.find { |p| p.name == prot_name }
                 protc = model.get_protocol_conf(prot.name) if prot
-                if protc # && !protc['exclude']
+                if protc && !protc['skip_methods']
                     result.push([prot, protc])
                     result += f(model, prot, protc)
                 end
