@@ -2251,11 +2251,15 @@ module Bro
                 e
             elsif type.kind == :type_typedef
                 if name == 'instancetype' && owner
+                    e = owner
                     if owner.is_a?(Bro::ObjCCategory)
-                        resolve_type_by_name(owner.owner)
-                    else
-                        owner
+                        e = resolve_type_by_name(owner.owner)
                     end
+                    if e.is_a?(Bro::ObjCClass) && !e.template_params.empty?
+                        # owner has generic parameter type, turn into generic
+                        e = [e] + e.template_params
+                    end
+                    e
                 elsif type.declaration.kind == :cursor_template_type_parameter
                     # Find template parameter in objc class 
                     e = nil
