@@ -304,8 +304,8 @@ module Bro
 
     class ObjCId < Entity
         attr_accessor :protocols
-        def initialize(protocols)
-            super(nil, nil)
+        def initialize(model, protocols)
+            super(model, nil)
             @protocols = protocols
         end
 
@@ -314,7 +314,13 @@ module Bro
         end
 
         def java_name
-            @protocols.map(&:java_name).join(' & ')
+            # filter protocols that are only available 
+            pp = @protocols.find_all do |prot|
+                c = @model.get_protocol_conf(prot.name)
+                next unless c && !c['skip_implements']
+                prot
+            end
+            pp.map(&:java_name).join(' & ')
         end
     end
 
@@ -910,8 +916,9 @@ module Bro
 
         def java_name
             if !@java_name
-                # check for configured first 
-                @java_name = ((@model.get_class_conf(owner.name) || {})['template_parameters'] || {})[name]
+                # check for configured first [
+                conf = ((@model.get_class_conf(owner.name) || {})['template_parameters'] || {})[@name] || {}
+                @java_name = if conf.is_a?(String) then conf else conf['name'] end
                 if !@java_name
                     # replace known values 
                     if name == "ObjectType"
@@ -934,14 +941,28 @@ module Bro
         end
 
         def extend_java_type
-            # if template arg type is a protocol -- need to extend it from NSObject as well, otherwise it 
-            # will not go to containers such as NSArray
-            e = extend_type
-            if e.is_a?(ObjCProtocol)
-                "NSObject & #{e.java_name}" 
-            else
-                e.java_name
+            # try to pick from configuration first 
+            conf = ((@model.get_class_conf(owner.name) || {})['template_parameters'] || {})[@name]
+            t = nil
+            t = conf['type'] if conf && conf.is_a?(Hash)
+            t = " extends " + t if t
+            if !t 
+                e = extend_type
+                if e.is_a?(ObjCProtocol)
+                    # if template arg type is a protocol -- need to extend it from NSObject as well, otherwise it 
+                    # will not go to containers such as NSArray
+                    t = "NSObject"
+                    c = model.get_protocol_conf(e.name)
+                    t += " & " + e.java_name if c && !c['skip_implements'] && !['skip_genertics']
+                elsif e.is_a?(ObjCId)
+                    t = "NSObject"
+                    t += " & " + e.java_name if !e.java_name.empty?
+                else
+                    t =  e.java_name
+                end
+                t = " extends " + t if t && !t.empty?
             end
+            return t
         end
     end
 
@@ -2161,7 +2182,7 @@ module Bro
                         if types.size == 1
                             types[0]
                         else
-                            ObjCId.new(types)
+                            ObjCId.new(self, types)
                         end
                     end
                 elsif name =~ /^(Class)<(.*)>$/
@@ -4393,7 +4414,7 @@ ARGV[1..-1].each do |yaml_file|
             data['ptr'] = "public static class #{cls.java_name}Ptr extends Ptr<#{cls.java_name}, #{cls.java_name}Ptr> {}"
         else
             # add generic definitions from template params
-            param_decl = "<" + cls.template_params.map{|e| "#{e.java_name} extends #{e.extend_java_type}"}.join(", ") + ">"
+            param_decl = "<" + cls.template_params.map{|e| "#{e.java_name}#{e.extend_java_type}"}.join(", ") + ">"
             param_list = "<" + cls.template_params.map{|e| e.java_name}.join(", ") + ">"
             data['name'] = name + param_decl
             data['ptr'] = "public static class #{cls.java_name}Ptr#{param_decl} extends Ptr<#{cls.java_name}#{param_list}, #{cls.java_name}Ptr#{param_list}> {}"
