@@ -999,6 +999,9 @@ module Bro
                     # ignored CXCursor_ObjCException = 425
                     # ignored as doesn't provide useful information 
                     # __attribute__((__objc_exception__)) @interface NSException : NSObject <NSCopying, NSSecureCoding>
+                when 432
+                    # CXCursor_ObjCSubclassingRestricted 
+                    # TODO: check if useful 
                 when :cursor_obj_c_class_ref
                     @opaque = false if generic_fix
                     @opaque = @name == cursor.spelling unless generic_fix
