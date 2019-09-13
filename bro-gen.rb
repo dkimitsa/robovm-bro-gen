@@ -423,6 +423,7 @@ module Bro
             else
                 # deprecated case 
                 @dep_version = -1
+                source = source.sub('__deprecated__', 'deprecated') if source.start_with?('__deprecated__')
                 if source.start_with?('deprecated(')
                     # has message 
                     @dep_message = source.sub('deprecated(', '')[0..-2]
@@ -451,7 +452,7 @@ module Bro
 
     def self.parse_attribute(cursor)
         source = Bro.read_source_range(cursor.extent)
-        if source.start_with?('availability(') || source.start_with?('deprecated(') || source == 'deprecated'
+        if source.start_with?('availability(') || source.start_with?('deprecated(') || source == 'deprecated' || source.start_with?('__deprecated__(') || source == '__deprecated__'
             return AvailableAttribute.new source
         elsif source.start_with?('unavailable')
             return UnavailableAttribute.new source
