@@ -544,8 +544,17 @@ module Bro
 
             @is_structDef = false
             @typedef_type = cursor.typedef_type
+            enum_without_name = false
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
+                when :cursor_integer_literal
+                when :cursor_obj_c_class_ref
+                when :cursor_obj_c_protocol_ref
+                when :cursor_binary_operator
+                when :cursor_paren_expr
+                when 427 #CXCursor_ObjCIndependentClass          = 427
+                    # ignored
+
                 when :cursor_parm_decl
                     @parameters.push CallbackParameter.new cursor
                 when :cursor_struct, :cursor_union
@@ -563,11 +572,25 @@ module Bro
                         # special case: there could be no name in enum typedef declaration
                         # in this case there is no name attached to enum which will make
                         # difficulties exporting it, just attach typedef name to enum
-                        # name in this case s
-                        @enum.name = @name
+                        # name in this case
+                        enum_without_name = true
                     end
+                when :cursor_unexposed_attr
+                    attribute = Bro.parse_attribute(cursor)
+                    if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
+                        $stderr.puts "WARN: Typedef #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
+                    end
+                    @attributes.push attribute
+                else
+                    raise "Unknown cursor kind #{cursor.kind} in typedef at #{Bro.location_to_s(@location)}"
                 end
                 next :continue
+            end
+
+            if enum_without_name
+                # enum without name, attach name to it as well as visibility attributes 
+                @enum.name = @name
+                @enum.attributes += @attributes
             end
         end
 
