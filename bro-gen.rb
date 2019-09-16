@@ -2183,7 +2183,7 @@ module Bro
                     e = @structs.find { |e| e.id == eid}
                 end
                 e
-            elsif type.kind == :type_obj_c_object_pointer
+            elsif type.kind == :type_obj_c_object_pointer || type.kind == 161 # CXType_ObjCObject = 161 # consider point to obj and objc object same 
                 name = type.pointee.spelling
                 name = name.gsub(/\s*\bconst\b\s*/, '')
 
