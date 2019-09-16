@@ -82,8 +82,9 @@ module Bro
     class Entity
         @@deprecated_version = 6
 
-        attr_accessor :id, :location, :name, :framework, :attributes
+        attr_accessor :id, :location, :name, :framework, :attributes, :cursor
         def initialize(model, cursor)
+            @cursor = cursor
             @location = cursor ? cursor.location : nil
             @id = cursor ? Bro.location_to_id(@location) : nil
             @name = cursor ? cursor.spelling : nil
@@ -1719,8 +1720,8 @@ module Bro
                     # also result_type is not populated
                     # fields. But result type can be obtained from cursor.completion
                     # and as workaround I will try this
-                    if cursor.completion != nil
-                        ch = cursor.completion.chunks.detect{|e| e[:kind] == :result_type}
+                    if @cursor.completion != nil
+                        ch = @cursor.completion.chunks.detect{|e| e[:kind] == :result_type}
                         ch = ch[:text] if ch != nil
                         @const = ch.match(/\bconst\b/) != nil if ch != nil
                     end
