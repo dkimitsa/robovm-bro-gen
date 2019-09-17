@@ -1791,6 +1791,18 @@ module Bro
                         end
             end
 
+            cursor.visit_children do |cursor, _parent|
+                case cursor.kind
+                when :cursor_unexposed_attr
+                    attribute = Bro.parse_attribute(cursor)
+                    if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
+                        $stderr.puts "WARN: Const value #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
+                    end
+                    @attributes.push attribute
+                end
+                next :continue
+            end
+
             if @type == 'long' && @value == '9223372036854775807L'
                 # We assume NSIntegerMax
                 @value = 'Bro.IS_32BIT ? 0x7fffffffL : 0x7fffffffffffffffL'
@@ -2650,7 +2662,7 @@ module Bro
                     # check if variable definition starts with static in this case it can't be
                     # global value and should be converted to constant if possible
                     src = Bro.read_source_range(cursor.extent)
-                    if src == '?' || !src.strip.start_with?("static")
+                    if src == '?' || !(src.strip =~ /^static/)
                         @global_values.push GlobalValue.new self, cursor
                     else
                         # static variable, get value
