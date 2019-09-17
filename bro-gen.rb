@@ -2127,11 +2127,7 @@ module Bro
                         conf = @conf_typed_enums[gtype.name]
                         if conf 
                             # typed enum/dict case 
-                            if conf["enum"]
-                                gtype = resolve_type_by_name(conf["enum"])
-                            else
-                                gtype = resolve_type_by_name(conf["dictionary"])
-                            end
+                            gtype = resolve_type_by_name(conf["type"])
                         else
                             gtype = resolve_type(owner, gtype.typedef_type, generic: true)
                         end
