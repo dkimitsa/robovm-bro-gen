@@ -1727,6 +1727,9 @@ module Bro
         def is_const?
             if @const
                 @const
+            elsif conf['readonly'] != nil
+                # override with config 
+                @const = conf['readonly']
             else
                 # find out const status, check typedefs 
                 t = @type
