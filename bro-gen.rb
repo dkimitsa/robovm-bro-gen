@@ -2177,7 +2177,7 @@ module Bro
             if type.kind != :type_obj_c_object_pointer && @conf_typedefs[gen_name] # Try to lookup typedefs without generics
                 resolve_type_by_name gen_name
             elsif @conf_typed_enums[name]
-                n = @conf_typed_enums[name]['enum'] || @conf_typed_enums[name]['dictionary']
+                n = @conf_typed_enums[name]['enum'] || @conf_typed_enums[name]['dictionary'] || @conf_typed_enums[name]['class']
                 resolve_type_by_name n
             elsif _generic && @conf_generic_typedefs[name]
                 resolve_type_by_name name, true
