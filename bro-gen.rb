@@ -2572,6 +2572,7 @@ module Bro
 
         def push_availability(entity, lines = [], indentation = '', annotation_lines: nil)
             since = entity.since
+            since = nil if since && since <= $ios_version_min_usable.to_f
             deprecated = entity.deprecated
             deprecated = -1 if deprecated && deprecated > $ios_version.to_f # in case of API_TO_BE_DEPRECATED
             reason = entity.reason
@@ -3432,6 +3433,7 @@ LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
 $ios_version = '13.0'
+$ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
 sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS#{$ios_version}.sdk"
