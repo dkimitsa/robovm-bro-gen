@@ -419,6 +419,10 @@ module Bro
                         @dep_message = v.sub('message=', '')[0..-1]
                         @dep_message = eval(@dep_message).strip
                         @dep_message = nil if @dep_message.empty?
+                    elsif v.start_with?('replacement="') && v.end_with?('"')
+                        @dep_message = v.sub('replacement=', '')[0..-1]
+                        @dep_message = eval(@dep_message).strip
+                        @dep_message = if @dep_message.empty? then else "Use " + @dep_message end
                     end
                 end
             else
