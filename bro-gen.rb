@@ -970,15 +970,15 @@ module Bro
             conf = ((@model.get_class_conf(owner.name) || {})['template_parameters'] || {})[@name]
             t = nil
             t = conf['type'] if conf && conf.is_a?(Hash)
-            t = " extends " + t if t
+            t = " extends " + t if t && !t.empty?
             if !t 
                 e = extend_type
                 if e.is_a?(ObjCProtocol)
                     # if template arg type is a protocol -- need to extend it from NSObject as well, otherwise it 
                     # will not go to containers such as NSArray
                     t = "NSObject"
-                    c = model.get_protocol_conf(e.name)
-                    t += " & " + e.java_name if c && !c['skip_implements'] && !['skip_genertics']
+                    c = @model.get_protocol_conf(e.name)
+                    t += " & " + e.java_name if c && !c['skip_implements'] && !c['skip_generics']
                 elsif e.is_a?(ObjCId)
                     t = "NSObject"
                     t += " & " + e.java_name if !e.java_name.empty?
@@ -2130,7 +2130,11 @@ module Bro
                         conf = @conf_typed_enums[gtype.name]
                         if conf 
                             # typed enum/dict case 
-                            gtype = resolve_type_by_name(conf["type"])
+                            if conf["dictionary"]
+                                gtype = resolve_type_by_name(conf["dictionary"])
+                            else
+                                gtype = resolve_type_by_name(conf["type"])
+                            end 
                         else
                             gtype = resolve_type(owner, gtype.typedef_type, generic: true)
                         end
@@ -3907,7 +3911,7 @@ ARGV[1..-1].each do |yaml_file|
         methods_s = vals.map do |(v, vconf)|
             lines = []
             java_name = v.java_name()
-            java_type = vconf['type'] || model.to_java_type(model.resolve_type(owner, v.type, true))
+            java_type = vconf['type'] || model.to_java_type(model.resolve_type(nil, v.type, true))
             visibility = vconf['visibility'] || 'public'
 
             # static class grouping support
