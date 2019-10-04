@@ -625,7 +625,7 @@ module Bro
     end
 
     class Struct < Entity
-        attr_accessor :members, :children, :parent, :union, :type
+        attr_accessor :members, :children, :parent, :union, :type, :packed_align
         def initialize(model, cursor, parent = nil, union = false)
             super(model, cursor)
             @name = @name.gsub(/\s*\bconst\b\s*/, '')
@@ -634,6 +634,11 @@ module Bro
             @type = cursor.type
             @parent = parent
             @union = union
+
+            # prepare to handle packer attribute 
+            @packed_align = nil
+            has_packed_attr = false
+            align_attr_value = nil
 
             # parse members and anonymous structs/unions and put everyting into early_members
             # items will be sorted out after parsing
@@ -664,14 +669,25 @@ module Bro
 
                 when :cursor_unexposed_attr, :cursor_packed_attr, :cursor_annotate_attr
                     a = Bro.read_attribute(cursor)
-                    if a != '?' && model.is_included?(self)
-                        $stderr.puts "WARN: #{@union ? 'union' : 'struct'} #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute #{a}"
+                    if model.is_included?(self)
+                        if a == "packed" || a == "__packed__"
+                            has_packed_attr = true
+                        elsif a.start_with?('aligned(') && a.end_with?(')')
+                            align = a.sub('aligned(', '')[0..-2]
+                            align = eval(align).to_i
+                            align_attr_value = align
+                        elsif a != '?'
+                            $stderr.puts "WARN: #{@union ? 'union' : 'struct'} #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute #{a}"
+                        end
                     end
                 else
                     raise "Unknown cursor kind #{cursor.kind} in struct at #{Bro.location_to_s(@location)}"
                 end
                 next :continue
             end
+
+            # save packed attribute 
+            @packed_align = (align_attr_value == nil ? 1 : align_attr_value) if has_packed_attr
 
             # process early members and replace anonymous structs/uniions
             @members = []
@@ -2941,6 +2957,15 @@ def struct_to_java(model, data, name, struct, conf)
     data['name'] = name
     data['visibility'] = conf['visibility'] || 'public'
     data['annotations'] = conf['annotations']
+    if struct.packed_align != nil
+        # there was a packed annotation for structure, add it to output only if was not 
+        # overridden by configuration
+        exiting = nil
+        if data['annotations'] != nil
+            data['annotations'].find { |e| e.start_with?('@Packed(') }
+        end
+        data['annotations'] = (data['annotations'] || []) + ["@Packed(#{struct.packed_align})"]
+    end
     data['extends'] = "Struct<#{name}>"
     data['ptr'] = "public static class #{name}Ptr extends Ptr<#{name}, #{name}Ptr> {}"
     data['javadoc'] = "\n" + model.push_availability(struct).join("\n") + "\n"
