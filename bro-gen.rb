@@ -635,7 +635,7 @@ module Bro
     end
 
     class Struct < Entity
-        attr_accessor :members, :children, :parent, :union, :type
+        attr_accessor :members, :children, :parent, :union, :type, :packed_align
         def initialize(model, cursor, parent = nil, union = false)
             super(model, cursor)
             @name = @name.gsub(/\s*\bconst\b\s*/, '')
@@ -644,6 +644,11 @@ module Bro
             @type = cursor.type
             @parent = parent
             @union = union
+
+            # prepare to handle packer attribute 
+            @packed_align = nil
+            has_packed_attr = false
+            align_attr_value = nil
 
             # parse members and anonymous structs/unions and put everyting into early_members
             # items will be sorted out after parsing
@@ -674,14 +679,25 @@ module Bro
 
                 when :cursor_unexposed_attr, :cursor_packed_attr, :cursor_annotate_attr
                     a = Bro.read_attribute(cursor)
-                    if a != '?' && model.is_included?(self)
-                        $stderr.puts "WARN: #{@union ? 'union' : 'struct'} #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute #{a}"
+                    if model.is_included?(self)
+                        if a == "packed" || a == "__packed__"
+                            has_packed_attr = true
+                        elsif a.start_with?('aligned(') && a.end_with?(')')
+                            align = a.sub('aligned(', '')[0..-2]
+                            align = eval(align).to_i
+                            align_attr_value = align
+                        elsif a != '?'
+                            $stderr.puts "WARN: #{@union ? 'union' : 'struct'} #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute #{a}"
+                        end
                     end
                 else
                     raise "Unknown cursor kind #{cursor.kind} in struct at #{Bro.location_to_s(@location)}"
                 end
                 next :continue
             end
+
+            # save packed attribute 
+            @packed_align = (align_attr_value == nil ? 1 : align_attr_value) if has_packed_attr
 
             # process early members and replace anonymous structs/uniions
             @members = []
@@ -2165,11 +2181,11 @@ module Bro
             valid_generics ? generic_types : nil
         end
 
-        def resolve_type(owner, type, allow_arrays = false, method = nil, generic: false)
+        def resolve_type(owner, type, allow_arrays = false, method = nil, generic: false, struct_member: false)
             cache_id = build_type_cache_name(owner, type, generic)
             t = @type_cache[cache_id]
             unless t
-                t = resolve_type0(owner, type, allow_arrays, method, generic)
+                t = resolve_type0(owner, type, allow_arrays, method, generic, struct_member)
                 raise "Failed to resolve type '#{type.spelling}' with kind #{type.kind} defined at #{Bro.location_to_s(type.declaration.location)}" unless t
                 if t.is_a?(Typedef) && t.is_callback?
                     # Callback.
@@ -2180,7 +2196,7 @@ module Bro
             t
         end
 
-        def resolve_type0(owner, type, allow_arrays = false, _method = nil, _generic = false)
+        def resolve_type0(owner, type, allow_arrays, _method, _generic, _struct_member)
             return Bro.builtins_by_type_kind(:type_void) unless type
             name = type.spelling
             name = name.gsub(/\s*\bconst\b\s*/, '')
@@ -2305,8 +2321,14 @@ module Bro
                     else resolve_type_by_name(base)
                 end
                 if e
-                    # Wrap in Pointer as many times as there are *s in name
-                    e = (1..name.scan(/\*/).count).inject(e) { |t, _i| t.pointer }
+                    cnt = name.scan(/\*/).count
+                    if _struct_member && cnt == 1
+                        # resolving for struct member, return as zero length array, struct related code will replace with pointer
+                        e =  Array.new(e, [0])
+                    else 
+                        # Wrap in Pointer as many times as there are *s in name
+                        e = (1..cnt).inject(e) { |t, _i| t.pointer }
+                    end
                 end
                 e
             elsif type.kind == :type_unexposed
@@ -2869,6 +2891,18 @@ def struct_to_java(model, data, name, struct, conf)
     index = 0
     members = []
 
+    # check if struct is unbounded 
+    unbounded_member = nil
+    unbounded_member_type = nil
+    if struct.members.size > 1 && conf['skip_unbounded'] != true
+        t = model.resolve_type(struct, struct.members.last.type, true, struct_member: true)
+        # check if last member is candidate for unbounded struct, e.g. it either byte[], byte[0] or byte[1] (or other type than byte )
+        if t.is_a?(Bro::Array) && t.dimensions.size == 1 && (t.dimensions[0] == 0 || t.dimensions[0] == 1)
+            unbounded_member = struct.members.last
+            unbounded_member_type = "@ByVal " + t.base_type.pointer.java_name
+        end
+    end
+
     struct.members.each do |e|
         mconf = conf[index] || conf[e.name] || {}
         unless mconf['exclude']
@@ -2877,13 +2911,26 @@ def struct_to_java(model, data, name, struct, conf)
             upcase_member_name[0] = upcase_member_name[0].capitalize
 
             visibility = mconf['visibility'] || 'public'
-            type = mconf['type'] || model.to_java_type(model.resolve_type(struct, e.type, true))
-            getter = type == 'boolean' ? 'is' : 'get'
+            type = mconf['type']
+            if e == unbounded_member && !type
+                # its last unbounded member, and its configuration is not overriden 
+                # no setter is designated for it and type for it @ByVal BytePtr
+                type = unbounded_member_type
+                getter = 'get'
 
-            members << "@StructMember(#{index}) #{visibility} native #{type} #{getter}#{upcase_member_name}();"
-            members << "@StructMember(#{index}) #{visibility} native #{name} set#{upcase_member_name}(#{type} #{member_name});"
+                members << "@StructMember(#{index}) #{visibility} native #{type} #{getter}#{upcase_member_name}();"
+            else
+                type ||= model.to_java_type(model.resolve_type(struct, e.type, true))
+                getter = type == 'boolean' ? 'is' : 'get'
+
+                members << "@StructMember(#{index}) #{visibility} native #{type} #{getter}#{upcase_member_name}();"
+                # skip member setter 
+                unless mconf['readonly'] == true || mconf['setter'] == false
+                    members << "@StructMember(#{index}) #{visibility} native #{name} set#{upcase_member_name}(#{type} #{member_name});"
+                end
+            end
             members.join("\n    ")
-      end
+        end
         index += inc
     end
     members = members.join("\n    ")
@@ -2895,6 +2942,8 @@ def struct_to_java(model, data, name, struct, conf)
         struct.members.map do |e|
             mconf = conf[index] || conf[e.name] || {}
             next if mconf['exclude']
+            next if e == unbounded_member # skip if its last member of unbounded struct 
+            next if mconf['readonly'] == true || mconf['setter'] == false # skip read-only members 
 
             member_name = mconf['name'] || e.name
             upcase_member_name = member_name.dup
@@ -2918,6 +2967,15 @@ def struct_to_java(model, data, name, struct, conf)
     data['name'] = name
     data['visibility'] = conf['visibility'] || 'public'
     data['annotations'] = conf['annotations']
+    if struct.packed_align != nil
+        # there was a packed annotation for structure, add it to output only if was not 
+        # overridden by configuration
+        exiting = nil
+        if data['annotations'] != nil
+            data['annotations'].find { |e| e.start_with?('@Packed(') }
+        end
+        data['annotations'] = (data['annotations'] || []) + ["@Packed(#{struct.packed_align})"]
+    end
     data['extends'] = "Struct<#{name}>"
     data['ptr'] = "public static class #{name}Ptr extends Ptr<#{name}, #{name}Ptr> {}"
     data['javadoc'] = "\n" + model.push_availability(struct).join("\n") + "\n"
