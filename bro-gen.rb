@@ -31,6 +31,16 @@ class String
         replace(split('_').each(&:capitalize!).join(''))
     end
 
+    def downcase_first_camelize
+        dup.downcase_first_camelize!
+    end
+
+    def downcase_first_camelize!
+        camelize!
+        downcase_first
+        self
+    end
+
     def underscore
         dup.underscore!
     end
@@ -3271,17 +3281,17 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
                     constructor_lines << "}"
                 end
             elsif is_init?(owner, method) && inherited_initializers
-              # init method added from super class as inherited initializer
-              # in this case native method is not generated and constructor
-              # is implemented with only super call to presave java way of initialization
-              # however it is possible to declare native method and just call it
-              # but it block any possible initialization in super java part
-              constructor_lines << "@Method(selector = \"#{method.name}\")"
-              if conf['throws']
-                  constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{throw_parameters_s}) throws #{conf['throws']} { super(#{throw_params.join(', ')}); }"
-              else
-                  constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{parameters_s}) { super(#{args_s}); }"
-              end
+				# init method added from super class as inherited initializer
+				# in this case native method is not generated and constructor
+				# is implemented with only super call to presave java way of initialization
+				# however it is possible to declare native method and just call it
+				# but it block any possible initialization in super java part
+				constructor_lines << "@Method(selector = \"#{method.name}\")"
+				if conf['throws']
+				    constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{throw_parameters_s}) throws #{conf['throws']} { super(#{throw_params.join(', ')}); }"
+				else
+				    constructor_lines << "#{constructor_visibility}#{!generics_s.empty? ? ' ' + generics_s : ''} #{owner_name}(#{parameters_s}) { super(#{args_s}); }"
+				end
             elsif is_init?(owner, method)
                 constructor_lines << "@Method(selector = \"#{method.name}\")"
                 if conf['throws']
@@ -4128,96 +4138,108 @@ ARGV[1..-1].each do |yaml_file|
     functions.each do |owner, funcs|
         data = template_datas[owner] || {}
         data['name'] = owner
-        methods_s = funcs.map do |(f, fconf)|
-            name = fconf['name'] || f.name
-            name = name[0, 1].downcase + name[1..-1]
+        methods_lines = [] 
+        constructors_lines = [] 
+
+        methods_s = funcs.each do |(f, fconf)|
+            name = fconf['name'] || (f.name[0, 1].downcase + f.name[1..-1])
             lines = []
+            constructor_lines = [] 
             visibility = fconf['visibility'] || 'public'
             parameters = f.parameters
-            static = 'static '
-            paramconf = fconf['parameters'] || {}
-            firstparamconf = parameters.size >= 1 ? paramconf[parameters[0].name] : nil
-            firstparamtype = (firstparamconf || {})['type']
-
+            params_conf = fconf['parameters'] || {}
             annotations = fconf['annotations'] && !fconf['annotations'].empty? ? fconf['annotations'].uniq.join(' ') : nil
+            static = 'static '
+            constructor = false
 
-            if !fconf['static'] && parameters.size >= 1 && (firstparamtype == owner || model.resolve_type(nil, parameters[0].type).java_name == owner)
+            firstparamconf = parameters.size >= 1 ? params_conf[parameters[0].name] : nil
+            firstparamtype = (firstparamconf || {})['type']
+            if fconf['constructor'] == true
+            	# wrapping into constructor, leaving static
+            	constructor = true
+            elsif !fconf['static'] && parameters.size >= 1 && (firstparamtype == owner || model.resolve_type(nil, parameters[0].type).java_name == owner)
                 # Instance method
-                java_type = model.to_java_type(model.resolve_type(nil, parameters[0].type))
-                if !firstparamtype && java_type.include?('@ByVal')
-                    # If the instance is passed @ByVal we need to make a wrapper method and keep the @Bridge method static
-                    java_ret = fconf['return_type'] || model.resolve_type(owner, f.return_type).java_name
-                    java_parameters = parameters[1..-1].map do |e|
-                        pconf = paramconf[e.name] || {}
-                        marshaler = pconf['marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{pconf['marshaler']}.class) " : ''
-                        "#{marshaler}#{pconf['type'] || model.resolve_type(nil, e.type).java_name} #{pconf['name'] || e.name}"
-                    end
-                    args = parameters[1..-1].map do |e|
-                        pconf = paramconf[e.name] || {}
-                        pconf['name'] || e.name
-                    end
-                    args.unshift('this')
-                    model.push_availability(f, lines)
-                    lines << annotations.to_s if annotations
-                    lines << "#{visibility} #{java_ret} #{name}(#{java_parameters.join(', ')}) { #{java_ret != 'void' ? 'return ' : ''}#{name}(#{args.join(', ')}); }"
-                    # Alter the visibility for the @Bridge method to private
-                    visibility = 'private'
-                else
-                    parameters = parameters[1..-1]
-                    static = ''
-                end
+				parameters = parameters[1..-1]
+				static = ''
             end
 
-            java_ret_marshaler = fconf['return_marshaler']
-            if java_ret_marshaler
-                java_ret_marshaler = "@org.robovm.rt.bro.annotation.Marshaler(#{java_ret_marshaler}.class) "
-            else
-                java_ret_marshaler = ''
-            end
-
-            java_ret = fconf['return_type'] || model.to_java_type(model.resolve_type(nil, f.return_type))
-            java_parameters = parameters.map do |e|
-                pconf = paramconf[e.name] || {}
+        	ret_marshaler = fconf['return_marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{fconf['return_marshaler']}.class)" : ''
+            ret_type = fconf['return_type'] || model.to_java_type(model.resolve_type(nil, f.return_type))
+            param_types = parameters.each_with_object([]) do |p, l|
+                pconf = params_conf[p.name] || params_conf[l.size] || {}
                 marshaler = pconf['marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{pconf['marshaler']}.class) " : ''
-                "#{marshaler}#{pconf['type'] || model.to_java_type(model.resolve_type(nil, e.type))} #{pconf['name'] || e.name}"
+                l.push([marshaler, "#{pconf['type'] || model.to_java_type(model.resolve_type(nil, p.type))}", pconf['name'] || p.name])
+                l
             end
+            args_s = param_types.map {|p| p[2]}.join(', ')
+            parameters_s = param_types.map {|p| "#{p[1]} #{p[2]}"}.join(', ')
+            parameters_full_s = param_types.map {|p| "#{p[0]}#{p[1]} #{p[2]}"}.join(', ')
 
-            if fconf['throws']
-                model.push_availability(f, lines)
-                lines << annotations.to_s if annotations
-
-                error_type = 'NSError'
-                case fconf['throws']
-                when 'CFStreamErrorException'
-                    error_type = 'CFStreamError'
-                  end
-
-                new_parameters_s = java_parameters[0..-2].join(', ')
-                params = parameters[0..-2].map do |e|
-                    pconf = paramconf[e.name] || {}
-                    (pconf['name'] || e.name).to_s
+            if constructor 
+                constructor_visibility = fconf['constructor_visibility'] || 'public'
+                if fconf['throws']
+                    error_type = 'NSError'
+                    case fconf['throws']
+                    when 'CFStreamErrorException'
+                        error_type = 'CFStreamError'
+                     end
+    
+                    throw_parameters_s = param_types.map { |p| "#{p[1]} #{p[2]}" }[0..-2].join(', ')
+                    throw_params = param_types[0..-2].map {|p| p[2] }
+                    throw_args_s = throw_params.length.zero? ? 'ptr' : "#{throw_params.join(', ')}, ptr"
+    
+                    constructor_lines << "#{constructor_visibility} #{owner}(#{throw_parameters_s}) throws #{fconf['throws']} {"
+                    constructor_lines << "   super((SkipInit) null);"
+                    constructor_lines << "   #{error_type}.#{error_type}Ptr ptr = new #{error_type}.#{error_type}Ptr();"
+                    constructor_lines << "   long handle = #{name}(#{throw_args_s});"
+                    constructor_lines << "   if (ptr.get() != null) { throw new #{fconf['throws']}(ptr.get()); }"
+                    constructor_lines << "   initObject(handle);"
+                    constructor_lines << '}'
+                else
+                    should_retain = fconf['constructor_retain'] || false
+                    constructor_lines << "#{constructor_visibility} #{owner}(#{parameters_s}) { super((Handle) null, #{name}(#{args_s})); #{should_retain ? "retain(getHandle());" : ""} }"
                 end
-                throw_args_s = params.length.zero? ? 'ptr' : "#{params.join(', ')}, ptr"
-                lines << "#{visibility} #{static}#{java_ret} #{name}(#{new_parameters_s}) throws #{fconf['throws']} {"
-                lines << "   #{error_type}.#{error_type}Ptr ptr = new #{error_type}.#{error_type}Ptr();"
-                ret = java_ret.gsub(/@\w+ /, '') # Trim annotations
-                ret = ret == 'void' ? '' : "#{ret} result = "
-                lines << "   #{ret}#{name}(#{throw_args_s});"
-                lines << "   if (ptr.get() != null) { throw new #{fconf['throws']}(ptr.get()); }"
-                lines << '   return result;' if java_ret != 'void'
-                lines << '}'
 
-                java_parameters[-1] = "#{error_type}.#{error_type}Ptr error"
-                visibility = 'private'
+               	# do not override ret_type if it was customized through config
+				ret_type = "@Pointer long" unless conf['return_type']
+				visibility = 'protected'
+            else 
+                if fconf['throws']
+                    error_type = 'NSError'
+                    case fconf['throws']
+                    when 'CFStreamErrorException'
+                        error_type = 'CFStreamError'
+                    end
+
+                    throw_parameters_s = param_types.map { |p| "#{p[0]} #{p[2]}" }[0..-2].join(', ')
+                    throw_params = param_types[0..-2].map {|e| e[2].to_s }
+                    throw_args_s = throw_params.length.zero? ? 'ptr' : "#{throw_params.join(', ')}, ptr"
+
+                    lines << "#{visibility} #{static}#{ret_type} #{name}(#{throw_parameters_s}) throws #{fconf['throws']} {"
+                    lines << "   #{error_type}.#{error_type}Ptr ptr = new #{error_type}.#{error_type}Ptr();"
+                    ret = ret_type.gsub(/@\w+ /, '') # Trim annotations
+                    ret = ret == 'void' ? '' : "#{ret} result = "
+                    lines << "   #{ret}#{name}(#{throw_args_s});"
+                    lines << "   if (ptr.get() != null) { throw new #{fconf['throws']}(ptr.get()); }"
+                    lines << '   return result;' if ret_type != 'void'
+                    lines << '}'
+
+                    visibility = 'private'
+                end
             end
 
             model.push_availability(f, lines)
             lines << annotations.to_s if annotations
             lines << "@Bridge(symbol=\"#{f.name}\", optional=true)"
-            lines << "#{visibility} #{static}native #{java_ret_marshaler}#{java_ret} #{name}(#{java_parameters.join(', ')});"
-            lines
-        end.flatten.join("\n    ")
+            lines << "#{visibility} #{static}native #{ret_marshaler}#{ret_type} #{name}(#{parameters_full_s});"
+
+            methods_lines.concat(lines)
+            constructors_lines.concat(constructor_lines)
+        end
+        methods_s = methods_lines.flatten.join("\n    ")
+        constructors_s = constructors_lines.flatten.join("\n    ")
         data['methods'] = (data['methods'] || '') + "\n    #{methods_s}\n    "
+        data['constructors'] = (data['constructors'] || '') + "\n    #{constructors_s}\n    "
         data['imports'] = imports_s
         data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})")
         data['bind'] = "static { Bro.bind(#{owner}.class); }"
