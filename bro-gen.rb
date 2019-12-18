@@ -4200,7 +4200,8 @@ ARGV[1..-1].each do |yaml_file|
         constructors_lines = [] 
 
         methods_s = funcs.each do |(f, fconf)|
-            name = fconf['name'] || (f.name[0, 1].downcase + f.name[1..-1])
+            name = fconf['name'] || f.name
+            name = name[0, 1].downcase + name[1..-1] # todo: have force name downcase as there is bunch of yamls to be changed otherwise 
             lines = []
             constructor_lines = [] 
             visibility = fconf['visibility'] || 'public'
@@ -4221,7 +4222,7 @@ ARGV[1..-1].each do |yaml_file|
 				static = ''
             end
 
-        	ret_marshaler = fconf['return_marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{fconf['return_marshaler']}.class)" : ''
+        	ret_marshaler = fconf['return_marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{fconf['return_marshaler']}.class) " : ''
             ret_type = fconf['return_type'] || model.to_java_type(model.resolve_type(nil, f.return_type))
             param_types = parameters.each_with_object([]) do |p, l|
                 pconf = params_conf[p.name] || params_conf[l.size] || {}
@@ -4246,6 +4247,8 @@ ARGV[1..-1].each do |yaml_file|
                     throw_params = param_types[0..-2].map {|p| p[2] }
                     throw_args_s = throw_params.length.zero? ? 'ptr' : "#{throw_params.join(', ')}, ptr"
     
+                    model.push_availability(f, constructor_lines)
+                    constructor_lines << annotations.to_s if annotations
                     constructor_lines << "#{constructor_visibility} #{owner}(#{throw_parameters_s}) throws #{fconf['throws']} {"
                     constructor_lines << "   super((SkipInit) null);"
                     constructor_lines << "   #{error_type}.#{error_type}Ptr ptr = new #{error_type}.#{error_type}Ptr();"
@@ -4255,6 +4258,8 @@ ARGV[1..-1].each do |yaml_file|
                     constructor_lines << '}'
                 else
                     should_retain = fconf['constructor_retain'] || false
+                    model.push_availability(f, constructor_lines)
+                    constructor_lines << annotations.to_s if annotations
                     constructor_lines << "#{constructor_visibility} #{owner}(#{parameters_s}) { super((Handle) null, #{name}(#{args_s})); #{should_retain ? "retain(getHandle());" : ""} }"
                 end
 
@@ -4269,10 +4274,12 @@ ARGV[1..-1].each do |yaml_file|
                         error_type = 'CFStreamError'
                     end
 
-                    throw_parameters_s = param_types.map { |p| "#{p[0]} #{p[2]}" }[0..-2].join(', ')
+                    throw_parameters_s = param_types.map { |p| "#{p[1]} #{p[2]}" }[0..-2].join(', ')
                     throw_params = param_types[0..-2].map {|e| e[2].to_s }
                     throw_args_s = throw_params.length.zero? ? 'ptr' : "#{throw_params.join(', ')}, ptr"
 
+                    model.push_availability(f, lines)
+                    lines << annotations.to_s if annotations
                     lines << "#{visibility} #{static}#{ret_type} #{name}(#{throw_parameters_s}) throws #{fconf['throws']} {"
                     lines << "   #{error_type}.#{error_type}Ptr ptr = new #{error_type}.#{error_type}Ptr();"
                     ret = ret_type.gsub(/@\w+ /, '') # Trim annotations
@@ -4297,7 +4304,7 @@ ARGV[1..-1].each do |yaml_file|
         methods_s = methods_lines.flatten.join("\n    ")
         constructors_s = constructors_lines.flatten.join("\n    ")
         data['methods'] = (data['methods'] || '') + "\n    #{methods_s}\n    "
-        data['constructors'] = (data['constructors'] || '') + "\n    #{constructors_s}\n    "
+        data['constructors'] = (data['constructors'] || '') + "\n    #{constructors_s}\n    " unless constructors_s.empty?
         data['imports'] = imports_s
         data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})")
         data['bind'] = "static { Bro.bind(#{owner}.class); }"
