@@ -409,14 +409,10 @@ module Bro
         attr_accessor :platform, :version, :dep_version, :dep_message
         def initialize(source)
             super(source)
-            if source.start_with?('availability')
+            @dep_message = []
+            if source.start_with?('availability(')
                 source =~ /^availability\((.*)\)/
-                s = $1
-                args = s.scan(/(?:"(?:""|.)*?"(?!")|[^,]+)/)
-                args = args.collect{|x| x.strip || x}
-                @version = nil
-                @dep_version = nil
-                @dep_message = nil
+                args = $1.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/).collect{|x| x.strip || x}
                 @platform = args[0]
                 args[1..-1].each do |v|
                     if v == 'unavailable'
@@ -426,13 +422,13 @@ module Bro
                     elsif v.start_with?('deprecated=')
                         @dep_version = str_to_float(v.sub('deprecated=', '').sub('_', '.'))
                     elsif v.start_with?('message="') && v.end_with?('"')
-                        @dep_message = v.sub('message=', '')[0..-1]
-                        @dep_message = eval(@dep_message).strip
-                        @dep_message = nil if @dep_message.empty?
+                        m = v.sub('message=', '')[0..-1]
+                        m = eval(m).strip
+                        @dep_message.push m unless m.empty?
                     elsif v.start_with?('replacement="') && v.end_with?('"')
-                        @dep_message = v.sub('replacement=', '')[0..-1]
-                        @dep_message = eval(@dep_message).strip
-                        @dep_message = if @dep_message.empty? then else "Use " + @dep_message end
+                        m = v.sub('replacement=', '')[0..-1]
+                        m = eval(m).strip
+                        @dep_message.push decorate_dep_replacement(m) unless m.empty? || m.downcase.start_with?("Use ")
                     end
                 end
             else
@@ -441,10 +437,32 @@ module Bro
                 source = source.sub('__deprecated__', 'deprecated') if source.start_with?('__deprecated__')
                 if source.start_with?('deprecated(')
                     # has message 
-                    @dep_message = source.sub('deprecated(', '')[0..-2]
-                    @dep_message = eval(@dep_message).strip
-                    @dep_message = nil if @dep_message.empty?
+                    source =~ /^deprecated\((.*)\)/
+                    args = $1.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/).collect{|x| eval(x).strip || x}
+                    if args.length == 2
+                        # special case: message + replacement
+                        @dep_message.push args[0] unless args[0].empty?
+                        @dep_message.push decorate_dep_replacement(args[1]) unless args[1].empty?
+                    else 
+                        # common case 
+                        args.each { |m| @dep_message.push m unless m.empty? }
+                    end
                 end
+            end
+            if @dep_message && !@dep_message.empty?
+                @dep_message = @dep_message.join(". ")
+            else
+                @dep_message = nil
+            end
+        end
+
+        def decorate_dep_replacement(s)
+            m = s.downcase
+            if m.start_with?("use ") || m.start_with?(" instead")
+                s
+            else
+                # using just single "Use" (without instead) to minimize amount of diffs
+                "Use #{s}"
             end
         end
 
