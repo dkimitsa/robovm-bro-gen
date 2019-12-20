@@ -4253,6 +4253,14 @@ ARGV[1..-1].each do |yaml_file|
                 use_wrapper = true
             end
 
+            # types for bridge with native annotations (@ByVal, Marshallers etc )
+			bridge_param_types = parameters.each_with_object([]) do |p, l|
+				pconf = params_conf[p.name] || params_conf[l.size] || {}
+				marshaler = pconf['marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{pconf['marshaler']}.class) " : ''
+				l.push([marshaler, "#{pconf['type'] || model.to_java_type(model.resolve_type(nil, p.type))}", pconf['name'] || p.name])
+				l
+            end
+            
             if use_wrapper
                 # types for wrapper, without marshallers 
                 param_types = parameters.each_with_object([]) do |p, l|
@@ -4295,6 +4303,9 @@ ARGV[1..-1].each do |yaml_file|
                         lines << '   return result;' if ret_type != 'void'
                         lines << '}'
                     end
+
+                    # TODO: mutate parameter to @Brige to be NSError
+                    bridge_param_types[-1] = ["", "#{error_type}.#{error_type}Ptr", "error"]
                 else 
                     if (constructor) 
                         parameters_s = param_types.map { |p| "#{p[0]} #{p[1]}" }.join(', ')
@@ -4316,14 +4327,7 @@ ARGV[1..-1].each do |yaml_file|
                 visibility = 'private'
             end
 
-			# types for bridge with native annotations (@ByVal, Marshallers etc )
-			param_types = parameters.each_with_object([]) do |p, l|
-				pconf = params_conf[p.name] || params_conf[l.size] || {}
-				marshaler = pconf['marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{pconf['marshaler']}.class) " : ''
-				l.push([marshaler, "#{pconf['type'] || model.to_java_type(model.resolve_type(nil, p.type))}", pconf['name'] || p.name])
-				l
-			end
-            parameters_full_s = param_types.map {|p| "#{p[0]}#{p[1]} #{p[2]}"}.join(', ')
+            parameters_full_s = bridge_param_types.map {|p| "#{p[0]}#{p[1]} #{p[2]}"}.join(', ')
         	ret_marshaler = fconf['return_marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{fconf['return_marshaler']}.class) " : ''
             ret_type = fconf['return_type'] || model.to_java_type(model.resolve_type(nil, f.return_type))
 
