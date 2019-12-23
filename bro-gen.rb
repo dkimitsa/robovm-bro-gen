@@ -176,7 +176,7 @@ module Bro
 
         def java_name
             if @pointee.is_a?(Builtin)
-                if %w(byte short char int long float double void).include?(@pointee.name)
+                if %w(byte short char int long float double boolean void).include?(@pointee.name)
                     "#{@pointee.name.capitalize}Ptr"
                 elsif @pointee.name == 'MachineUInt'
                     'MachineSizedUIntPtr'
