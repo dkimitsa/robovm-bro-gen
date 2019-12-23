@@ -4260,6 +4260,7 @@ ARGV[1..-1].each do |yaml_file|
 				l.push([marshaler, "#{pconf['type'] || model.to_java_type(model.resolve_type(nil, p.type))}", pconf['name'] || p.name])
 				l
             end
+            bridge_ret_type = fconf['return_type'] || model.to_java_type(model.resolve_type(nil, f.return_type))
             
             if use_wrapper
                 # types for wrapper, without marshallers 
@@ -4290,7 +4291,7 @@ ARGV[1..-1].each do |yaml_file|
                         constructor_lines << "   if (ptr.get() != null) { throw new #{fconf['throws']}(ptr.get()); }"
                         constructor_lines << "   initObject(handle);"
                         constructor_lines << '}'
-                        ret_type = "@Pointer long" unless conf['return_type']
+                        bridge_ret_type = "@Pointer long" unless conf['return_type']
                     else 
                         model.push_availability(f, lines)
                         lines << annotations.to_s if annotations
@@ -4314,7 +4315,7 @@ ARGV[1..-1].each do |yaml_file|
                         model.push_availability(f, constructor_lines)
                         constructor_lines << annotations.to_s if annotations
                         constructor_lines << "#{visibility} #{owner}(#{parameters_s}) { super((Handle) null, #{name}(#{args_s})); #{should_retain ? "retain(getHandle());" : ""} }"
-                        ret_type = "@Pointer long" unless conf['return_type']
+                        bridge_ret_type = "@Pointer long" unless conf['return_type']
                     else 
                         # instance wrapper arround saved static method (due @ByVal)
                         parameters_s = param_types[1..-1].map { |p| "#{p[0]} #{p[1]}" }.join(', ')
@@ -4329,13 +4330,12 @@ ARGV[1..-1].each do |yaml_file|
 
             parameters_full_s = bridge_param_types.map {|p| "#{p[0]}#{p[1]} #{p[2]}"}.join(', ')
         	ret_marshaler = fconf['return_marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{fconf['return_marshaler']}.class) " : ''
-            ret_type = fconf['return_type'] || model.to_java_type(model.resolve_type(nil, f.return_type))
 
             # bridge method 
             model.push_availability(f, lines)
             lines << annotations.to_s if annotations
             lines << "@Bridge(symbol=\"#{f.name}\", optional=true)"
-            lines << "#{visibility} #{static}native #{ret_marshaler}#{ret_type} #{name}(#{parameters_full_s});"
+            lines << "#{visibility} #{static}native #{ret_marshaler}#{bridge_ret_type} #{name}(#{parameters_full_s});"
 
             methods_lines.concat(lines)
             constructors_lines.concat(constructor_lines)
