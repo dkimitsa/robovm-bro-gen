@@ -211,7 +211,7 @@ module Bro
 
         def java_name
             if @base_type.is_a?(Builtin)
-                if %w(byte byte short char int long float double void).include?(@base_type.name)
+                if %w(byte short char int long float double).include?(@base_type.name)
                     "#{@base_type.name.capitalize}Buffer"
                 elsif @base_type.name == 'MachineUInt'
                     'MachineSizedUIntPtr'
@@ -783,14 +783,14 @@ module Bro
     end
 
     class Function < Entity
-        attr_accessor :return_type, :parameters, :type
+        attr_accessor :return_type, :parameters, :type, :inline_statement
         def initialize(model, cursor)
             super(model, cursor)
             @type = cursor.type
             @return_type = cursor.result_type
             @parameters = []
             param_count = 0
-            @inline = false
+            @inline = cursor.extent.text.start_with?("static ") || cursor.extent.text.include?("static ")
             @variadic = cursor.variadic?
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
@@ -825,6 +825,7 @@ module Bro
                     param_count += 1
                 when :cursor_compound_stmt
                     @inline = true
+                    @inline_statement = cursor.extent.text
                 when :cursor_asm_label_attr, :cursor_unexposed_attr, :cursor_annotate_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
@@ -2806,11 +2807,14 @@ module Bro
             # Filter out functions not defined in the framework or library we're generating code for
             @functions = @functions.find_all { |f| is_included?(f) }
 
-            # Filter out varidadic and inline functions
+            # Find all functions with  inline statements create a map
+            inline_statement_map = @functions.find_all { |f| f.is_inline? && f.inline_statement != nil }.map{ |f| [f.name, f.inline_statement]}.to_h
+
+            # Filter out variadic functions
             @functions = @functions.find_all do |f|
-                if f.is_variadic? || f.is_inline? || !f.parameters.empty? && f.parameters[-1].type.spelling == 'va_list'
+                if f.is_variadic? || !f.parameters.empty? && f.parameters[-1].type.spelling == 'va_list'
                     definition = f.type.spelling.sub(/\(/, "#{f.name}(")
-                    $stderr.puts "WARN: Ignoring #{f.is_variadic? ? 'variadic' : 'inline'} function '#{definition}' at #{Bro.location_to_s(f.location)}"
+                    $stderr.puts "WARN: Ignoring 'variadic' function '#{definition}' at #{Bro.location_to_s(f.location)}"
                     false
                 else
                     true
@@ -2824,6 +2828,9 @@ module Bro
                 $stderr.puts "WARN: Ignoring duplicate function '#{definition}' at #{Bro.location_to_s(f.location)}"
             end
             @functions = uniq_functions
+
+            # assign inline statement to uniq functions 
+            @functions.find_all { |f| f.is_inline? && f.inline_statement == nil }.each{ |f| f.inline_statement = inline_statement_map[f.name]}
 
             # Filter out global values not defined in the framework or library we're generating code for
             @global_values = @global_values.find_all { |v| is_included?(v) }
@@ -3522,11 +3529,14 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '13.0'
+$ios_version = '13.3'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
 sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS#{$ios_version}.sdk"
+
+# environment variables that enables debug/tools modules 
+$dbg_dump_inline_fn = ENV.has_key?('BRO_DUMP_INLINE')  # generates inline functions with their original code in comments 
 
 unless File.exist?(sysroot)
     sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
@@ -4204,9 +4214,20 @@ ARGV[1..-1].each do |yaml_file|
     functions = {}
     model.functions.find_all { |f| f.is_available? && !f.is_outdated? }.each do |f|
         fconf = model.get_function_conf(f.name)
-        if fconf && !fconf['exclude']
+        if fconf 
+            next if fconf['exclude']
+            if f.is_inline? && !$dbg_dump_inline_fn
+                # function expected but it was converted to inline/static and it will not be found during runtime, showing ERR 
+                $stderr.puts ""
+                $stderr.puts "ERROR: Expected function '#{f.name}' now 'inline', probably manual implementation is expected! (location #{Bro.location_to_s(f.location)})"
+                $stderr.puts ""
+                next
+            end
+
             owner = fconf['class'] || default_class
             functions[owner] = (functions[owner] || []).push([f, fconf])
+        elsif f.is_inline?
+            $stderr.puts "WARN: Ignoring 'inline' function '#{f.name}' at #{Bro.location_to_s(f.location)}"
         end
     end
 
@@ -4217,7 +4238,8 @@ ARGV[1..-1].each do |yaml_file|
         methods_lines = [] 
         constructors_lines = [] 
 
-        methods_s = funcs.each do |(f, fconf)|
+        # proceed not inline functions (these shall not here if not forced by env variable )
+        funcs.find_all {|f, fconf| !f.is_inline?}.each do |(f, fconf)|
             name = fconf['name'] || f.name
             name = name[0, 1].downcase + name[1..-1] # todo: have force name downcase as there is bunch of yamls to be changed otherwise 
             lines = []
@@ -4340,6 +4362,35 @@ ARGV[1..-1].each do |yaml_file|
             methods_lines.concat(lines)
             constructors_lines.concat(constructor_lines)
         end
+
+        # dump all inline functions 
+        funcs.find_all {|f, fconf| f.is_inline? && f.inline_statement != nil}.each do |(f, fconf)|
+            name = fconf['name'] || f.name
+            name = name[0, 1].downcase + name[1..-1] # todo: have force name downcase as there is bunch of yamls to be changed otherwise 
+            lines = []
+            parameters = f.parameters
+            params_conf = fconf['parameters'] || {}
+            annotations = fconf['annotations'] && !fconf['annotations'].empty? ? fconf['annotations'].uniq.join(' ') : nil
+            ret_type = fconf['return_type'] || model.to_java_type(model.resolve_type(nil, f.return_type))
+            param_types = parameters.each_with_object([]) do |p, l|
+                pconf = params_conf[p.name] || params_conf[l.size] || {}
+                l.push(["#{pconf['type'] || model.resolve_type(nil, p.type).java_name}", pconf['name'] || p.name])
+                l
+            end
+            parameters_s = param_types.map { |p| "#{p[0]} #{p[1]}" }.join(', ')
+            lines << "/**"
+            lines << " * ported from #{f.name}"
+            lines << "*/"
+            lines << "public static #{ret_type} #{name}(#{parameters_s}) {"
+            f.inline_statement.split("\n").each {|l| lines << "  // " + l}                
+            if ret_type != 'void'
+                default_value = model.default_value_for_type(ret_type)
+                lines << "  return #{default_value};"
+            end
+            lines << "}"
+            methods_lines.concat(lines)
+        end
+
         methods_s = methods_lines.flatten.join("\n    ")
         constructors_s = constructors_lines.flatten.join("\n    ")
         data['methods'] = (data['methods'] || '') + "\n    #{methods_s}\n    "
