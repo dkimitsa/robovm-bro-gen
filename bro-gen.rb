@@ -436,9 +436,10 @@ module Bro
                 @dep_version = -1
                 source = source.sub('__deprecated__', 'deprecated') if source.start_with?('__deprecated__')
                 if source.start_with?('deprecated(')
-                    # has message 
-                    source =~ /^deprecated\((.*)\)/
-                    args = $1.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/).collect{|x| eval(x).strip || x}
+                    # has message
+                    source =~ /^deprecated\((.*)\)/m
+                    msg = $1.gsub("\n", '')
+                    args = msg.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/m).collect{|x| eval(x).strip || x}
                     if args.length == 2
                         # special case: message + replacement
                         @dep_message.push args[0] unless args[0].empty?
