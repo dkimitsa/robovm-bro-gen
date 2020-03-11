@@ -2564,7 +2564,16 @@ module Bro
                 "#{type[0].java_name}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
             else
                 type.java_name
-             end
+            end
+        end
+
+        def to_wrapper_java_type(type)
+        	# same as above but used for wrapper parameter definition thues not requires Bro annotation
+            if type.respond_to?('each') # Generic type
+                "#{type[0].java_name}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
+            else
+                type.java_name
+            end
         end
 
         def is_included?(entity)
@@ -4242,7 +4251,7 @@ ARGV[1..-1].each do |yaml_file|
         # proceed not inline functions (these shall not here if not forced by env variable )
         funcs.find_all {|f, fconf| !f.is_inline?}.each do |(f, fconf)|
             name = fconf['name'] || f.name
-            name = name[0, 1].downcase + name[1..-1] # todo: have force name downcase as there is bunch of yamls to be changed otherwise 
+            name = name[0, 1].downcase + name[1..-1] # todo: have force name downcase as there is bunch of yamls to be changed otherwise
             lines = []
             constructor_lines = [] 
             visibility = fconf['visibility'] || 'public'
@@ -4286,10 +4295,10 @@ ARGV[1..-1].each do |yaml_file|
             bridge_ret_type = fconf['return_type'] || model.to_java_type(model.resolve_type(nil, f.return_type))
             
             if use_wrapper
-                # types for wrapper, without marshallers 
+                # types for wrapper, without marshallers
                 param_types = parameters.each_with_object([]) do |p, l|
                     pconf = params_conf[p.name] || params_conf[l.size] || {}
-                    l.push(["#{pconf['type'] || model.resolve_type(nil, p.type).java_name}", pconf['name'] || p.name])
+                    l.push(["#{pconf['type'] || model.to_wrapper_java_type(model.resolve_type(nil, p.type))}", pconf['name'] || p.name])
                     l
                 end
                 ret_type = fconf['return_type'] || model.resolve_type(nil, f.return_type).java_name
