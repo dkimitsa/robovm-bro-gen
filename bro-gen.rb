@@ -587,7 +587,9 @@ module Bro
                 when :cursor_paren_expr
                 when 427 #CXCursor_ObjCIndependentClass          = 427
                     # ignored
-
+                when 441 # CXCursor_AlignedAttr = 441
+                    # ignored as not able to support right now
+                    # example typedef __attribute__((__ext_vector_type__(2),__aligned__(4))) float simd_packed_float2;
                 when :cursor_parm_decl
                     @parameters.push CallbackParameter.new cursor
                 when :cursor_struct, :cursor_union
@@ -682,6 +684,14 @@ module Bro
                     # CXCursor_ObjCBoxable = 436
                     # ignored as no benefits of it
                     # typedef struct __attribute__((objc_boxable)) CGPoint CGPoint;
+                when 441
+                    # CXCursor_AlignedAttr = 441
+                    a = Bro.read_attribute(cursor)
+                    if a.start_with?('aligned(') && a.end_with?(')')
+                        align = a.sub('aligned(', '')[0..-2]
+                        align = eval(align).to_i
+                        align_attr_value = align
+                    end
                 when :cursor_field_decl
                     m = StructMember.new(cursor: cursor)
                     early_members.push m
@@ -821,6 +831,8 @@ module Bro
                     # CXCursor_ObjCRequiresSuper = 430
                     # TODO: probably shell be added as JavaDoc that super call is requred (or annotation processor)
                     # - (void)updateConstraints __attribute__((availability(ios,introduced=6.0))) __attribute__((objc_requires_super));
+                when 440
+                    # TODO: CXCursor_WarnUnusedResultAttr = 440
                 when :cursor_parm_decl
                     @parameters.push FunctionParameter.new cursor, "p#{param_count}"
                     param_count += 1
@@ -2273,6 +2285,7 @@ module Bro
                 e
             elsif type.kind == :type_obj_c_object_pointer || type.kind == 161 # CXType_ObjCObject = 161 # consider point to obj and objc object same 
                 name = type.pointee.spelling
+                name = name.gsub(/__kindof\s*/, '')
                 name = name.gsub(/\s*\bconst\b\s*/, '')
 
                 if name =~ /^(id|NSObject)<(.*)>$/
@@ -3539,7 +3552,7 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '13.3'
+$ios_version = '13.4'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
