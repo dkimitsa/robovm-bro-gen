@@ -3205,7 +3205,7 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
 
     return [[], []] if method.is_a?(Bro::ObjCClassMethod) && method.is_class_property?
 
-    if seen[full_name]
+    if seen[full_name] || conf['exclude']
         [[], []]
     elsif method.is_variadic? || !method.parameters.empty? && method.parameters[-1].type.spelling == 'va_list'
         param_types = method.parameters.map { |e| e.type.spelling }
