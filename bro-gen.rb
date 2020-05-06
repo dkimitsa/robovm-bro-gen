@@ -2604,6 +2604,22 @@ module Bro
             end
         end
 
+        def is_location_included?(location)
+            framework = conf['framework']
+            internal_frameworks = conf['internal_frameworks']
+            path_match = conf['path_match']
+
+            # checking library here as well as AudioUnit currently in AudioToolBox which cause all API is not included
+            if path_match && location.file.match(path_match)
+                true
+            elsif framework 
+                location_framework = location.file.to_s.split(File::SEPARATOR).reverse.find_all { |e| e.match(/^.*\.(framework|lib)$/) }.map { |e| e.sub(/(.*)\.(framework|lib)/, '\1') }.first
+                location_framework == framework || internal_frameworks && internal_frameworks.include?(location_framework)
+            else
+                false
+            end
+        end
+
         def getter_for_name(name, type, omit_prefix)
             base = omit_prefix ? name[0..-1] : name[0, 1].upcase + name[1..-1]
             getter = name
@@ -2769,12 +2785,12 @@ module Bro
                             end
                             if const
                                 @constant_values.push const
-                                $stderr.puts "WARN: Turning the global value #{cursor.spelling} into constants"
+                                $stderr.puts "WARN: Turning the global value #{cursor.spelling} into constants" if is_location_included?(cursor.location)
                             else
-                                $stderr.puts "WARN: Failed to turning the global value #{cursor.spelling} into constants (eval failed)"
+                                $stderr.puts "WARN: Failed to turning the global value #{cursor.spelling} into constants (eval failed)" if is_location_included?(cursor.location)
                             end
                         else
-                            $stderr.puts "WARN: Ignoring static global value #{cursor.spelling} without value at #{Bro.location_to_s(cursor.location)}"
+                            $stderr.puts "WARN: Ignoring static global value #{cursor.spelling} without value at #{Bro.location_to_s(cursor.location)}" if is_location_included?(cursor.location)
                         end
                     end
                     next :continue
