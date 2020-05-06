@@ -5087,6 +5087,7 @@ ARGV[1..-1].each do |yaml_file|
       # dumping classes and protocols
       potential_classes_protos = [
           ["classes", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCClass)}],
+          ["categories", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCCategory)}],
           ["protocols", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCProtocol)}]
       ]
       potential_classes_protos.each do |title, entries|
@@ -5108,7 +5109,7 @@ ARGV[1..-1].each do |yaml_file|
                   end
               end
 
-              puts "    #{cls.name}:" + (!bad_methods ? " {}" : "") + (cls.since  ? " \#since #{cls.since}" : "")
+              puts "    #{cls.java_name}:" + (!bad_methods ? " {}" : "") + (cls.since  ? " \#since #{cls.since}" : "")
               next unless bad_methods
 
               # divide bad_methods into two set -- one with methods that has
