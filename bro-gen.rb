@@ -2790,7 +2790,6 @@ module Bro
                             end
                             if const
                                 @constant_values.push const
-                                $stderr.puts "WARN: Turning the global value #{cursor.spelling} into constants" if is_location_included?(cursor.location)
                             else
                                 $stderr.puts "WARN: Failed to turning the global value #{cursor.spelling} into constants (eval failed)" if is_location_included?(cursor.location)
                             end
