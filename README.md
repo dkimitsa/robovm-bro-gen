@@ -1,4 +1,6 @@
-#bro-gen
+#bro-gen  
+[**bro-gen tutorial**](https://dkimitsa.github.io/2017/10/19/bro-gen-tutorial/) -
+[**dkimitsa's dev blog**](https://dkimitsa.github.io/)
 
 `bro-gen` is a Ruby script which can be used to generate RoboVM bindings for C/Objective-C libraries and frameworks.
 
@@ -6,20 +8,15 @@
 
  * libclang 3.3+ (will use the one from Xcode if installed)
  * Ruby
- * Ruby FFI
+ * Ruby ffi (1.12.2+)
+ * Ruby ffi-clang (v0.6.0+)
 
-*Note about Ruby FFI*: If you get clang compiler errors when trying to install the FFI gem try the following:
-```
-sudo ARCHFLAGS=-Wno-error=unused-command-line-argument-hard-error-in-future gem install ffi
-```
-
-##Getting the code
+##Getting the code.  
+Important: checkout both `robovm-bro-gen` and `robovm` to same root. This allows to use using `cocoa-touch` yaml files for iOS system frameworks.
 
 ```
-git clone git://github.com/robovm/robovm-bro-gen.git
-cd robovm-bro-gen
-git submodule init
-git submodule update
+git clone git://github.com/dkimitsa/robovm-bro-gen.git
+git clone git://github.com/mobivm/robovm.git
 ```
 
 ##Usage
