@@ -1,17 +1,17 @@
-#bro-gen  
+# bro-gen  
 [**bro-gen tutorial**](https://dkimitsa.github.io/2017/10/19/bro-gen-tutorial/) -
 [**dkimitsa's dev blog**](https://dkimitsa.github.io/)
 
 `bro-gen` is a Ruby script which can be used to generate RoboVM bindings for C/Objective-C libraries and frameworks.
 
-##Requirements
+## Requirements
 
  * libclang 3.3+ (will use the one from Xcode if installed)
  * Ruby
  * Ruby ffi (1.12.2+)
  * Ruby ffi-clang (v0.6.0+)
 
-##Getting the code.  
+## Getting the code.  
 Important: checkout both `robovm-bro-gen` and `robovm` to same root. This allows to use using `cocoa-touch` yaml files for iOS system frameworks.
 
 ```
@@ -19,13 +19,13 @@ git clone git://github.com/dkimitsa/robovm-bro-gen.git
 git clone git://github.com/mobivm/robovm.git
 ```
 
-##Usage
+## Usage
 
 ```
 ./bro-gen path/to/put/generated/sources config1.yaml [config2.yaml ...]
 ```
 
-##YAML config file format
+## YAML config file format
 
 The YAML config files are used to tell the script how to process the functions, classes, enums, structs, etc in a particular framework or library. The supported top level keys are:
 
@@ -47,11 +47,11 @@ The YAML config files are used to tell the script how to process the functions, 
  * `values`: A hash of C global values that should be generated. See below.
  * `constants`: A hash of C constants that should be generated. See below.
 
-###About regexps
+### About regexps
 
 Many of the keys in the YAML hashes are regexp patterns. A regexp must match the input fully to be a match so there's no need to use ^ and $ at the stared and end of the regexp. Capturing groups in the regexp pattern can be used in the values of the hash. These are referenced using Ruby style placeholders. `#{g[0]}` for the first group, `#{g[1]}` for the second and so on.
 
-###enums
+### enums
 
 The keys in this hash specify enum names. Only enums that have a matching key in this hash will be generated. The values are also hashes, usually empty (`{}`) but the following keys are supported:
 
@@ -67,7 +67,7 @@ The keys in this hash specify enum names. Only enums that have a matching key in
  * `marshaler`: Specifies the `@Marshaler` to use when marhsaling this enum. E.g. `Bits.AsMachineSizedIntMarshaler`, `ValuedEnum.AsMachineSizedUIntMarshaler`. Can ususally be determined automatically by the script.
  * `<MemberName>`: Used to rename a member completely. Use the C member name as key and the Java member name as value.
 
-###classes
+### classes
 
 The keys in this hash specify class/struct name regexp patterns. Only classes/structs that have a matching key in this hash will be generated. The values are also hashes with the following supported keys:
 
@@ -86,7 +86,7 @@ The keys in this hash specify class/struct name regexp patterns. Only classes/st
    * `name`: The name of the struct member. Allows renaming of struct members.
    * `type`: The Java type of the struct member.
 
-###protocols
+### protocols
 
 The keys in this hash specify Objective-C protocol name regexp patterns. Only protocols that have a matching key in this hash will be generated. A Java interface will be generated for each matching protocol along with an adapter class implementing all methods in the interface.
 
@@ -101,7 +101,7 @@ The values are also hashes with the following supported keys:
  * `methods`: See below.
  * `skip_adapter`: Boolean specifying whether an adapter should be generated for the Java interface. The default is `true`.
 
-###categories
+### categories
 
 The keys in this hash specify regexps that matches Objective-C category names or Objective-C category target class names or both of them concatenated and separated by a `@`. For categories targeting classes in the current framework the default is to add the category methods to that class. For other categories the default is to create a new class with the name `<category>Extensions` that extends `NSExtensions` and that has static methods for each category method.
 
@@ -111,7 +111,7 @@ The keys in this hash specify regexps that matches Objective-C category names or
  * `properties`: See below.
  * `methods`: See below.
 
-###functions
+### functions
 
 The keys in this hash specify regexps that matches C function names. Functions not matching any key in this hash will be ignored. Java doesn't have global functions so each function will be convered into a method on a particular class. If no class is explicitly specified it will be assigned to a class named the same as the framework code is being generated for. If not generating code for a framework the default is to add functions to a class named `Functions`.
 
@@ -129,7 +129,7 @@ Note that Bro does not currently support variable parameter functions so such me
    * `name`: The name to use for the parameter in the Java method.
    * `type`: The Java parameter type.
 
-###values
+### values
 
 The keys in this hash specify regexps that matches C global value names. Values not matching any key in this hash will be ignored. Java doesn't have global values so each value will be converted into a getter method and a setter method (if not readonly) on a particular class. If no class is explicitly specified they will be assigned to a class named the same as the framework code is being generated for. If not generating code for a framework the default is to add value methods to a class named `Functions`.
 
@@ -141,7 +141,7 @@ The keys in this hash specify regexps that matches C global value names. Values 
  * `readonly`: Boolean specifying whether this is a readonly value. `const` values are always readonly.
  * `dereference`: Boolean specifying whether the address of the looked up symbol should be dereferenced (the default) or used as is. The default is `true`.
 
-###constants
+### constants
 
 The keys in this hash specify regexps that matches C constants (macros). Constants not matching any key in this hash will be ignored. Java doesn't have global constants so each constant will be added as a `static final` field on a particular class. If no class is explicitly specified it will be assigned to a class named the same as the framework code is being generated for. If not generating code for a framework the default is to add constants to a class named `Functions`.
 
@@ -153,7 +153,7 @@ Enums in the framework or library being generated which don't have a match in th
  * `type`: The Java type of the constant. The default is determined from the constant's type.
  * `visibility`: The visibility (access modifiers) of the generated field. The default is `public`.
 
-###properties
+### properties
 
 The keys in a `properties` hash are regexp patterns matching Objective-C property names. The script will generate getter and setter (if not readonly) methods for the property. The values of the hash are hashes with the following keys:
 
@@ -164,7 +164,7 @@ The keys in a `properties` hash are regexp patterns matching Objective-C propert
  * `readonly`: Boolean specifying whether this is a readonly property. If the property is readonly in Obj-C it will always be readonly.
  * `omit_prefix`: Boolean specifying whether Java Bean style `set`, `get`/`is` should be removed from the name of the property.
 
-###methods
+### methods
 
 The keys in a `methods` hash are regexp patterns matching Objective-C method (selector) names. The Obj-C selector will be prefixed with `+` for static methods and `-` for instance methods before finding a match.
 
