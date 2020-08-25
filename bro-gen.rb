@@ -1937,8 +1937,8 @@ module Bro
                 case cursor.kind
                 when 409
                     # Ignored
-                # when 417 
-                #     # CXCursor_VisibilityAttr = 417 
+                when 417 
+                    # CXCursor_VisibilityAttr = 417 
                 when 437 
                     # CXCursor_FlagEnum = 437
                     # typedef enum __attribute__((flag_enum,enum_extensibility(open)))
