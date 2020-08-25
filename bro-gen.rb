@@ -2290,6 +2290,11 @@ module Bro
                 e
             elsif type.kind == :type_obj_c_object_pointer || type.kind == 161 # CXType_ObjCObject = 161 # consider point to obj and objc object same 
                 name = type.pointee.spelling
+                if type.pointee.kind == :type_typedef
+                    # look up for case typedef NSObject MYObject;
+                    td = @typedefs.find { |e| e.name == name }
+                    name = td.typedef_type.spelling if td
+                end
                 name = name.gsub(/__kindof\s*/, '')
                 name = name.gsub(/\s*\bconst\b\s*/, '')
 
