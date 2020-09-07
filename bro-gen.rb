@@ -791,6 +791,22 @@ module Bro
             @name = !cursor.spelling.empty? ? cursor.spelling : def_name
             @type = cursor.type
         end
+
+        def name
+            # escape names that slashes with Java keyworks
+            case @name
+            when 'native'
+                '_native'
+            when 'public'
+                '_public'
+            when 'private'
+                '_private'
+            when 'static'
+                '_static'
+            else
+                @name
+            end
+        end
     end
 
     class Function < Entity
