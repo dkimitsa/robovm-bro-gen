@@ -2718,7 +2718,10 @@ module Bro
                     value = value[1..-1] if value.start_with?('@"') && value.end_with?('"')
                 when :cursor_integer_literal
                     value = cursor.extent.text
-                when :cursor_unexposed_expr, :cursor_binary_operator
+                when :cursor_unexposed_expr
+                    value = cursor.extent.text
+                    value = value[1..-1] if value.start_with?('@"') && value.end_with?('"')
+                when :cursor_binary_operator
                     value = cursor.extent.text
                 end
 
