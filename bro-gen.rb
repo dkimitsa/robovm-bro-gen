@@ -4553,6 +4553,51 @@ ARGV[1..-1].each do |yaml_file|
         g(model, owner, owner, conf, {})
     end
 
+    # returns inherited class(static) methods/properties .
+    def inherited_static_items(model, owner, conf)
+        def g(model, owner, cls, conf, seen, seen_props)
+            r = []
+            return r if !cls.is_a?(Bro::ObjCClass)
+
+            # duplicate static methods from 
+            statics = []
+            methods_conf = conf['methods'] || {}
+            cls.class_methods.find_all { |method| method.is_a?(Bro::ObjCClassMethod) }.each do |method|
+                full_name = '+' + method.name
+                next if seen[full_name] 
+                seen[full_name] = true
+
+                if owner != cls
+                    mconf = methods_conf[full_name]
+                    statics.push(method) unless mconf && (mconf["exclude"] == true || mconf["constructor"] == true)
+                end
+            end
+            # duplicate static properties
+            props_conf = conf['properties'] || {}
+            cls.properties.find_all { |prop| prop.is_static?}.each do |prop|
+                full_name = '+' + prop.name
+                next if seen_props[full_name] 
+                seen_props[full_name] = true
+
+                if owner != cls
+                    pconf = props_conf[full_name]
+                    statics.push(prop) unless pconf && pconf["exclude"] == true
+                end
+            end
+            r.push([statics, conf, cls]) if statics.length > 0
+
+            if cls.superclass
+                supercls = model.objc_classes.find { |e| e.name == cls.superclass }
+                super_conf = model.get_class_conf(supercls.name)
+                r += g(model, owner, supercls, super_conf, seen, seen_props) if super_conf != nil
+            end
+            r
+        end
+
+        g(model, owner, owner, conf, {}, {})
+    end
+
+    
     # Assign methods and properties to classes/protocols
     members = {}
     (model.objc_classes + model.objc_protocols).each do |cls|
@@ -4566,7 +4611,7 @@ ARGV[1..-1].each do |yaml_file|
         members[owner][:members].push([cls.instance_methods + cls.class_methods + cls.properties, c, cls])
     end
 
-    # add initializers from super classes if these are missing
+    # add initializers/static items from super classes if these are missing
     model.objc_classes.each do |cls|
         c = model.get_class_conf(cls.name)
         next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
@@ -4576,6 +4621,9 @@ ARGV[1..-1].each do |yaml_file|
         # otherwise class will lack possible constructors
         inheriter_inits = inherited_initializers(model, cls, c)
         members[owner][:members] += inheriter_inits
+
+        inheriter_static = inherited_static_items(model, cls, c)
+        members[owner][:members] += inheriter_static
     end
 
     unassigned_categories = []
@@ -4636,6 +4684,37 @@ ARGV[1..-1].each do |yaml_file|
         g(model, cls, conf).uniq { |e| e[0].name }
     end
 
+    # returns inherited class(static) methods/properties from protocols.
+    def all_static_from_protocols(model, prots)
+        seen = {}
+        seen_props = {}
+        r = []
+        prots.each do |(prot, protc)|
+            # duplicate static methods from 
+            statics = []
+            methods_conf = protc['methods'] || {}
+            prot.class_methods.find_all { |method| method.is_a?(Bro::ObjCClassMethod) }.each do |method|
+                full_name = '+' + method.name
+                next if seen[full_name] 
+                seen[full_name] = true
+                mconf = methods_conf[full_name]
+                statics.push(method) unless mconf && (mconf["exclude"] == true || mconf["constructor"] == true)
+            end
+        
+            # suplicate static properties 
+            props_conf = protc['properties'] || {}
+            prot.properties.find_all { |prop| prop.is_static?}.each do |prop|
+                full_name = '+' + prop.name
+                next if seen_props[full_name] 
+                seen_props[full_name] = true
+                pconf = props_conf[full_name]
+                statics.push(prop) unless pconf && pconf["exclude"] == true
+                r.push([statics, protc, prot]) if statics.length > 0
+            end
+        end
+        r
+    end
+
     # Add all methods defined by protocols to all implementing classes
     model.objc_classes.find_all { |cls| !cls.is_opaque? }.each do |cls|
         c = model.get_class_conf(cls.name)
@@ -4644,11 +4723,20 @@ ARGV[1..-1].each do |yaml_file|
         owner = c['name'] || cls.java_name
         prots = all_protocols(model, cls, c)
         if cls.superclass
-            prots -= all_protocols(model, model.objc_classes.find { |e| e.name == cls.superclass }, model.get_class_conf(cls.superclass))
+            parent_prots = all_protocols(model, model.objc_classes.find { |e| e.name == cls.superclass }, model.get_class_conf(cls.superclass))
+            prots -= parent_prots
+            parent_prots -= prots
+        else 
+            parent_prots = nil
         end
         prots.each do |(prot, protc)|
             members[owner] = members[owner] || { owner: cls, owner_name: owner, members: [], conf: c }
             members[owner][:members].push([prot.instance_methods + prot.class_methods + prot.properties, protc, prot])
+        end
+        # add statics 
+        if parent_prots
+            members[owner] = members[owner] || { owner: cls, owner_name: owner, members: [], conf: c }
+            members[owner][:members] += all_static_from_protocols(model, parent_prots)
         end
     end
 
