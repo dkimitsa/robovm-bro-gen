@@ -3260,14 +3260,14 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
                 name = method.name.tr(':', '$')
                 # report this case in suggestion_data to point dev that this method
                 # will receive $$ in the name
-                suggestion_data = [full_name, name] if !conf['trim_after_first_colon'] && (name.count('$') > 0)
+                suggestion_data = [full_name, name] if !conf['trim_after_first_colon'] && !conf['trim'] && (name.count('$') > 0)
             end
             if method.parameters.empty? && method.return_type.kind != :type_void && conf['property']
                 base = name[0, 1].upcase + name[1..-1]
                 name = ret_type[0] == 'boolean' ? "is#{base}" : "get#{base}"
             elsif method.name.start_with?('set') && method.name.size > 3 && method.parameters.size == 1 && method.return_type.kind == :type_void # && conf['property']
                 name = name.sub(/\$$/, '')
-            elsif conf['trim_after_first_colon']
+            elsif conf['trim_after_first_colon'] || conf['trim']
                 name = name.sub(/\$.*/, '')
             end
         end
