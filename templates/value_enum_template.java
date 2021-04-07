@@ -22,19 +22,28 @@ package org.robovm.foo;
     /*</constants>*/
     
     private static /*<name>*/ClassName/*</name>*/[] values = new /*<name>*/ClassName/*</name>*/[] {/*<value_list>*//*</value_list>*/};
-    
+
     /*<name>*/ClassName/*</name>*/ (String getterName) {
         super(Values.class, getterName);
     }
-    
+    /*<name>*/ClassName/*</name>*/ (/*<type>*/Type/*</type>*/ value) {
+        super(value);
+    }
+
     public static /*<name>*/ClassName/*</name>*/ valueOf(/*<type>*/Type/*</type>*/ value) {
-        for (/*<name>*/ClassName/*</name>*/ v : values) {
-            if (v.value().equals(value)) {
-                return v;
+        synchronized (/*<name>*/ClassName/*</name>*/.class) {
+            for (/*<name>*/ClassName/*</name>*/ v : values) {
+                if (v.isAvailable() && v.value().equals(value)) {
+                    return v;
+                }
             }
+            // entry was not known compilation time. probably new entry available on new OS version, extending instead
+            // of crashing with exception
+            /*<name>*/ClassName/*</name>*/ v = new /*<name>*/ClassName/*</name>*/(value);
+            values = Arrays.copyOf(values, values.length + 1);
+            values[values.length - 1] = v;
+            return v;
         }
-        throw new IllegalArgumentException("No constant with value " + value + " found in " 
-            + /*<name>*/ClassName/*</name>*/.class.getName());
     }
     
     /*<methods>*/
