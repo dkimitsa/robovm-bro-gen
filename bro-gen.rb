@@ -4085,6 +4085,7 @@ ARGV[1..-1].each do |yaml_file|
             java_name = v.java_name()
             java_type = vconf['type'] || model.to_java_type(model.resolve_type(nil, v.type, true))
             visibility = vconf['visibility'] || 'public'
+            marshaler = vconf['marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{vconf['marshaler']}.class) " : ''
 
             # static class grouping support
             if last_static_class != vconf['static_class']
@@ -4106,10 +4107,10 @@ ARGV[1..-1].each do |yaml_file|
             else
                 lines.push("#{indentation}@GlobalValue(symbol=\"#{v.name}\", optional=true)")
             end
-            lines.push("#{indentation}#{visibility} static native #{java_type} #{java_name}();")
+            lines.push("#{indentation}#{visibility} static native #{marshaler}#{java_type} #{java_name}();")
             if !v.is_const? && !vconf['readonly']
                 model.push_availability(v, lines, indentation)
-                lines += ["#{indentation}@GlobalValue(symbol=\"#{v.name}\", optional=true)", "public static native void #{java_name}(#{java_type} v);"]
+                lines += ["#{indentation}@GlobalValue(symbol=\"#{v.name}\", optional=true)", "public static native void #{java_name}(#{marshaler}#{java_type} v);"]
             end
             lines
         end.flatten.join("\n    ")
