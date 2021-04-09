@@ -2304,6 +2304,18 @@ module Bro
                     e = @structs.find { |e| e.id == eid}
                 end
                 e
+            elsif type.kind == :type_obj_c_interface
+                name = type.spelling
+                # check typedefs for override first 
+                if _generic && @conf_generic_typedefs[name]
+                    name = @conf_generic_typedefs[name]
+                else
+                    name = @conf_typedefs[name] || name
+                end
+                e ||= @typedefs.find { |e| e.name == name }
+                # then check for classes 
+                e ||= @objc_classes.find { |e| e.name == name }
+                e
             elsif type.kind == :type_obj_c_object_pointer || type.kind == 161 # CXType_ObjCObject = 161 # consider point to obj and objc object same 
                 name = type.pointee.spelling
                 if type.pointee.kind == :type_typedef
@@ -3599,7 +3611,7 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '14.0'
+$ios_version = '14.3'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
@@ -3718,7 +3730,7 @@ ARGV[1..-1].each do |yaml_file|
         imports.push("#{c['package']}.*") if c['package']
 
         if custom_framework
-            framework_roots << File.expand_path(File.dirname(yaml_file), File.dirname(f))
+            framework_roots << File.dirname(f)
         end
     end
 
@@ -4084,6 +4096,7 @@ ARGV[1..-1].each do |yaml_file|
             lines = []
             java_name = v.java_name()
             java_type = vconf['type'] || model.to_java_type(model.resolve_type(nil, v.type, true))
+            marshaler = vconf['marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{vconf['marshaler']}.class) " : ''
             visibility = vconf['visibility'] || 'public'
             marshaler = vconf['marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{vconf['marshaler']}.class) " : ''
 
