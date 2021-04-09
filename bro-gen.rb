@@ -2796,6 +2796,7 @@ module Bro
                     else
                         # static variable, get value
                         value = extract_static_constant_value(cursor)
+                        value_orig = value
                         if value
                             const=nil
                             begin
@@ -2817,7 +2818,7 @@ module Bro
                             if const
                                 @constant_values.push const
                             else
-                                $stderr.puts "WARN: Failed to turning the global value #{cursor.spelling} into constants (eval failed)" if is_location_included?(cursor.location)
+                                $stderr.puts "WARN: Failed to turning the global value #{cursor.spelling} into constants (eval failed), value #{value_orig}" if is_location_included?(cursor.location)
                             end
                         else
                             $stderr.puts "WARN: Ignoring static global value #{cursor.spelling} without value at #{Bro.location_to_s(cursor.location)}" if is_location_included?(cursor.location)
