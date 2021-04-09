@@ -2994,7 +2994,7 @@ def struct_to_java(model, data, name, struct, conf)
         # check if last member is candidate for unbounded struct, e.g. it either byte[], byte[0] or byte[1] (or other type than byte )
         if t.is_a?(Bro::Array) && t.dimensions.size == 1 && (t.dimensions[0] == 0 || t.dimensions[0] == 1)
             unbounded_member = struct.members.last
-            unbounded_member_type = "@ByVal " + t.base_type.pointer.java_name
+            unbounded_member_type = "@Array({1}) " + t.base_type.pointer.java_name
         end
     end
 
