@@ -3727,7 +3727,7 @@ ARGV[1..-1].each do |yaml_file|
         imports.push("#{c['package']}.*") if c['package']
 
         if custom_framework
-            framework_roots << File.expand_path(File.dirname(yaml_file), File.dirname(f))
+            framework_roots << File.dirname(f)
         end
     end
 
