@@ -2718,6 +2718,8 @@ module Bro
                     value = value[1..-1] if value.start_with?('@"') && value.end_with?('"')
                 when :cursor_integer_literal
                     value = cursor.extent.text
+                    # workaround if ends with L
+                    value = value[0..-2] if value.end_with?('L')
                 when :cursor_unexposed_expr
                     value = cursor.extent.text
                     value = value[1..-1] if value.start_with?('@"') && value.end_with?('"')
