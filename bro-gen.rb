@@ -3237,7 +3237,7 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
         $stderr.puts "WARN: Ignoring variadic method '#{owner.name}.#{method.name}(#{param_types.join(', ')})' at #{Bro.location_to_s(method.location)}"
         [[], []]
     elsif !conf['exclude']
-        # is used to produce hints for faster yaml file contructinon
+        # is used to produce hints for faster yaml file construction
         suggestion_data = nil
         # dkimitsa: if not specified in config(get here as nil) -- consider as false
         prot_as_class = false if prot_as_class == nil
@@ -4420,7 +4420,7 @@ ARGV[1..-1].each do |yaml_file|
             parameters_full_s = bridge_param_types.map {|p| "#{p[0]}#{p[1]} #{p[2]}"}.join(', ')
         	ret_marshaler = fconf['return_marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{fconf['return_marshaler']}.class) " : ''
 
-            # bridge method 
+            # bridge method
             model.push_availability(f, lines)
             lines << annotations.to_s if annotations
             lines << "@Bridge(symbol=\"#{f.name}\", optional=true)"
@@ -4559,12 +4559,12 @@ ARGV[1..-1].each do |yaml_file|
             r = []
             return r if !cls.is_a?(Bro::ObjCClass)
 
-            # duplicate static methods from 
+            # duplicate static methods from
             statics = []
             methods_conf = conf['methods'] || {}
             cls.class_methods.find_all { |method| method.is_a?(Bro::ObjCClassMethod) }.each do |method|
                 full_name = '+' + method.name
-                next if seen[full_name] 
+                next if seen[full_name]
                 seen[full_name] = true
 
                 if owner != cls
@@ -4576,7 +4576,7 @@ ARGV[1..-1].each do |yaml_file|
             props_conf = conf['properties'] || {}
             cls.properties.find_all { |prop| prop.is_static?}.each do |prop|
                 full_name = '+' + prop.name
-                next if seen_props[full_name] 
+                next if seen_props[full_name]
                 seen_props[full_name] = true
 
                 if owner != cls
@@ -4597,7 +4597,7 @@ ARGV[1..-1].each do |yaml_file|
         g(model, owner, owner, conf, {}, {})
     end
 
-    
+
     # Assign methods and properties to classes/protocols
     members = {}
     (model.objc_classes + model.objc_protocols).each do |cls|
@@ -4690,22 +4690,22 @@ ARGV[1..-1].each do |yaml_file|
         seen_props = {}
         r = []
         prots.each do |(prot, protc)|
-            # duplicate static methods from 
+            # duplicate static methods from
             statics = []
             methods_conf = protc['methods'] || {}
             prot.class_methods.find_all { |method| method.is_a?(Bro::ObjCClassMethod) }.each do |method|
                 full_name = '+' + method.name
-                next if seen[full_name] 
+                next if seen[full_name]
                 seen[full_name] = true
                 mconf = methods_conf[full_name]
                 statics.push(method) unless mconf && (mconf["exclude"] == true || mconf["constructor"] == true)
             end
-        
-            # suplicate static properties 
+
+            # duplicate static properties
             props_conf = protc['properties'] || {}
             prot.properties.find_all { |prop| prop.is_static?}.each do |prop|
                 full_name = '+' + prop.name
-                next if seen_props[full_name] 
+                next if seen_props[full_name]
                 seen_props[full_name] = true
                 pconf = props_conf[full_name]
                 statics.push(prop) unless pconf && pconf["exclude"] == true
@@ -4726,14 +4726,14 @@ ARGV[1..-1].each do |yaml_file|
             parent_prots = all_protocols(model, model.objc_classes.find { |e| e.name == cls.superclass }, model.get_class_conf(cls.superclass))
             prots -= parent_prots
             parent_prots -= prots
-        else 
+        else
             parent_prots = nil
         end
         prots.each do |(prot, protc)|
             members[owner] = members[owner] || { owner: cls, owner_name: owner, members: [], conf: c }
             members[owner][:members].push([prot.instance_methods + prot.class_methods + prot.properties, protc, prot])
         end
-        # add statics 
+        # add statics
         if parent_prots
             members[owner] = members[owner] || { owner: cls, owner_name: owner, members: [], conf: c }
             members[owner][:members] += all_static_from_protocols(model, parent_prots)
