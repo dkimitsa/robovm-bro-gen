@@ -2304,6 +2304,18 @@ module Bro
                     e = @structs.find { |e| e.id == eid}
                 end
                 e
+            elsif type.kind == :type_obj_c_interface
+                name = type.spelling
+                # check typedefs for override first 
+                if _generic && @conf_generic_typedefs[name]
+                    name = @conf_generic_typedefs[name]
+                else
+                    name = @conf_typedefs[name] || name
+                end
+                e ||= @typedefs.find { |e| e.name == name }
+                # then check for classes 
+                e ||= @objc_classes.find { |e| e.name == name }
+                e
             elsif type.kind == :type_obj_c_object_pointer || type.kind == 161 # CXType_ObjCObject = 161 # consider point to obj and objc object same 
                 name = type.pointee.spelling
                 if type.pointee.kind == :type_typedef
