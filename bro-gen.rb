@@ -1176,7 +1176,9 @@ module Bro
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
                 when :cursor_unexposed_expr, 417
-                # ignored
+                    # ignored
+                when 433 # NS_PROTOCOL_REQUIRES_EXPLICIT_IMPLEMENTATION
+                    # ignored
                 when :cursor_obj_c_protocol_ref
                     @opaque = @name == cursor.spelling
                     @protocols.push(cursor.spelling)
@@ -1195,7 +1197,7 @@ module Bro
                     end
                     @attributes.push attribute
                 else
-                    raise "Unknown cursor kind #{cursor.kind} in ObjC protocol at #{Bro.location_to_s(@location)}"
+                    raise "Unknown cursor kind #{cursor.kind} in ObjC protocol #{@name} at #{Bro.location_to_s(@location)}"
                 end
                 next :continue
             end
@@ -2122,7 +2124,7 @@ module Bro
             object_id
         end
 
-        def resolve_type_by_name(name, generic = false )
+        def resolve_type_by_name(name, generic = false, protocol_first: false )
             name = name.sub(/^(@ByVal|@Array.*)\s+/, '')
             orig_name = name
             # dkimitsa: if requested for generic search in separate configuration
@@ -2138,8 +2140,13 @@ module Bro
             e ||= @global_value_dictionaries[name]
             e ||= @enums.find { |e| e.name == name }
             e ||= @structs.find { |e| e.name == name }
-            e ||= @objc_classes.find { |e| e.name == name }
-            e ||= @objc_protocols.find { |e| e.name == name }
+            if protocol_first
+                e ||= @objc_protocols.find { |e| e.name == name }
+                e ||= @objc_classes.find { |e| e.name == name }
+            else 
+                e ||= @objc_classes.find { |e| e.name == name }
+                e ||= @objc_protocols.find { |e| e.name == name }
+            end
             e ||= @typedefs.find { |e| e.name == name }
             e || (orig_name != name ? Builtin.new(name) : nil)
         end
@@ -2331,7 +2338,7 @@ module Bro
                 if name =~ /^(id|NSObject)<(.*)>$/
                     # Protocols
                     names = $2.split(/\s*,/)
-                    types = names.map { |e| resolve_type_by_name(e) }
+                    types = names.map { |e| resolve_type_by_name(e, protocol_first: true) }
                     if types.find_all(&:!).empty?
                         if types.size == 1
                             types[0]
