@@ -2269,6 +2269,8 @@ module Bro
             elsif @conf_structdefs[name]
                 # create a typedef for this structure, mark it
                 Typedef.new self, nil, @conf_structdefs[name]
+            elsif type.kind == :type_obj_c_id
+                resolve_type_by_name "NSObject"
             elsif type.kind == :type_pointer
                 if type.pointee.kind == :type_unexposed && name.match(/\(\*\)/)
                     # Callback. libclang does not expose info for callbacks.
@@ -3611,7 +3613,7 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '14.3'
+$ios_version = '15.0'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
