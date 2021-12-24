@@ -1868,7 +1868,10 @@ module Bro
                         elsif value.end_with?('F') || value.end_with?('f')
                             'float'
                         elsif value =~ /^[-~]?((0x[0-9a-f]+)|([0-9]+))$/i
-                            'int'
+                            # auto promote to long
+                            v = value.to_i()
+                            @value = value + "L" if v > 2147483647 || v < (-2147483647-1)
+                            @value.end_with?('L') ? 'long' : 'int'
                         else
                             'double'
                         end
@@ -2822,7 +2825,7 @@ module Bro
                             const=nil
                             begin
                                 # FIXME: there is a chance that value under eval will match ruby api module var which
-                                # will cause side efects
+                                # will cause side effects
                                 value = eval(value)
                                 if value.class == String
                                     const = ConstantValue.new self, cursor, '"' + value + '"', String
@@ -3345,6 +3348,7 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
         # introduced constructor wrapper to be able solve cases when there are two init* methods with same arguments
         # which makes impossible to create two constructors in java
         static_constructor_name = is_static ? nil : conf['static_constructor_name']
+        suggestion_data = nil if static_constructor_name # reset any name suggestions as static_constructor_name will provide the name
 
         if conf['throws']
             error_type = 'NSError'
@@ -4690,7 +4694,7 @@ ARGV[1..-1].each do |yaml_file|
             (conf['protocols'] || cls.protocols).each do |prot_name|
                 prot = model.objc_protocols.find { |p| p.name == prot_name }
                 protc = model.get_protocol_conf(prot.name) if prot
-                if protc && !protc['skip_methods'] && !protc['exclude']
+                if protc && !protc['skip_methods']
                     result.push([prot, protc])
                     result += f(model, prot, protc)
                 end
@@ -4785,7 +4789,7 @@ ARGV[1..-1].each do |yaml_file|
         else
             protocols.each do |name|
                 c = model.get_protocol_conf(name)
-                l.push(model.objc_protocols.find { |p| p.name == name }.java_name) if c && !c['skip_implements'] && !c['exclude']
+                l.push(model.objc_protocols.find { |p| p.name == name }.java_name) if c && !c['skip_implements']
             end
         end
         l
@@ -4889,7 +4893,7 @@ ARGV[1..-1].each do |yaml_file|
         owner = h[:owner]
         next unless owner.is_a?(Bro::ObjCProtocol)
         c = model.get_protocol_conf(owner.name)
-        next unless !c['skip_adapter'] && !c['class'] && !c['exclude']
+        next unless !c['skip_adapter'] && !c['class']
         interface_name = c['name'] || owner.java_name
         owner_name = interface_name + 'Adapter'
         methods_lines = []
@@ -5165,144 +5169,157 @@ ARGV[1..-1].each do |yaml_file|
     #
     # dump suggestions for potentialy new classes/enum/protocols
     if !$potential_new_entries.empty?
-      puts "\n\n\n"
-      puts "\# YAML file pottentialy missing entries suggestions\n"
-      puts "\n\n\n"
+        puts "\n\n\n"
+        puts "\# YAML file potentially missing entries suggestions\n"
+        puts "\n\n\n"
 
-      # dumping enums
-      potential_enums = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Enum ) || key.is_a?(Bro::EnumValue)  }
-      if !potential_enums.empty?
-          puts "#enums:"
-          puts "\# potentialy missing enums"
-          puts "#enums:"
-          potential_enums.each do |enum, data|
+        # dumping enums
+        potential_enums = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Enum ) || key.is_a?(Bro::EnumValue)  }
+        if !potential_enums.empty?
+            puts "#enums:"
+            puts "\# potentially missing enums"
+            puts "#enums:"
+            potential_enums.each do |enum, data|
 
-              enum_params = []
-              enum_comments = []
-              enum_members = enum.values.collect {|e| e.name}
-              enum_comments.push( "since #{enum.since}" ) if enum.since
+                enum_params = []
+                enum_comments = []
+                enum_members = enum.values.collect {|e| e.name}
+                enum_comments.push( "since #{enum.since}" ) if enum.since
 
-              # get common prefix
-              if !enum_members.empty?
-                  enum_members.push(enum.name) if enum_members.length == 1 && !enum.name.empty?
-                  if enum_members.length == 1
-                      prefix = enum_members[0]
-                      enum_comments.push("!Prefix invalid!")
-                  else
-                      min, max = enum_members.minmax
-                      idx = min.size.times{|i| break i if min[i] != max[i]}
-                      prefix = min[0...idx]
-                  end
-                  prefix = "" if !enum.name.empty? && prefix.start_with?(enum.name)
-                  enum_params.push("prefix: #{prefix}") if !prefix.empty?
-              end
+                # get common prefix
+                if !enum_members.empty?
+                    enum_members.push(enum.name) if enum_members.length == 1 && !enum.name.empty?
+                    if enum_members.length == 1
+                        prefix = enum_members[0]
+                        enum_comments.push("!Prefix invalid!")
+                    else
+                        min, max = enum_members.minmax
+                        idx = min.size.times{|i| break i if min[i] != max[i]}
+                        prefix = min[0...idx]
+                    end
+                    prefix = "" if !enum.name.empty? && prefix.start_with?(enum.name)
+                    enum_params.push("prefix: #{prefix}") if !prefix.empty?
+                end
 
-              enum_params.push("first: #{enum_members[0]}") if enum.name.empty?
-              enum_params = "{" + enum_params.join(", ") + "}"
-              enum_comments = enum_comments.empty? ? "" : " \#" + enum_comments.join(", ")
-              puts "    #{enum.name.empty? ? 'UNNAMED' : enum.name}: #{enum_params}#{enum_comments}"
-          end
-          puts "\n\n\n"
-      end
+                enum_params.push("first: #{enum_members[0]}") if enum.name.empty?
+                enum_params = "{" + enum_params.join(", ") + "}"
+                enum_comments = enum_comments.empty? ? "" : " \#" + enum_comments.join(", ")
+                puts "    #{enum.name.empty? ? 'UNNAMED' : enum.name}: #{enum_params}#{enum_comments}"
+            end
+            puts "\n\n\n"
+        end
 
-      # dumping structs
-      potential_structs = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Struct) }
-      if !potential_structs.empty?
-          puts "\# potentialy missing structs"
-          potential_structs.each do |struct, data|
-              puts "    #{struct.name}: {}" + (struct.since  ? " \#since #{struct.since}" : "")
-          end
-          puts "\n\n\n"
-      end
+        # dumping structs
+        potential_structs = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Struct) }
+        if !potential_structs.empty?
+            puts "\# potentialy missing structs"
+            potential_structs.each do |struct, data|
+                puts "    #{struct.name}: {}" + (struct.since  ? " \#since #{struct.since}" : "")
+            end
+            puts "\n\n\n"
+        end
 
-      # duming typedefs as structs        struct = td.struct
-      potential_typedefs = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Typedef) }
-      if !potential_typedefs.empty?
-          puts "\# potentialy missing typedefs"
-          potential_typedefs.each do |td, data|
-              struct = td.struct
-              if struct && struct.is_opaque?
-                  struct = model.structs.find { |e| e.name == td.struct.name } || td.struct
-              end
-              next if !struct || struct.is_opaque?
-              puts "    #{td.name}: {}" + (td.since  ? " \#since #{td.since}" : "")
-          end
-          puts "\n\n\n"
-      end
+        # duming typedefs as structs        struct = td.struct
+        potential_typedefs = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Typedef) }
+        if !potential_typedefs.empty?
+            puts "\# potentialy missing typedefs"
+            potential_typedefs.each do |td, data|
+                struct = td.struct
+                if struct && struct.is_opaque?
+                    struct = model.structs.find { |e| e.name == td.struct.name } || td.struct
+                end
+                next if !struct || struct.is_opaque?
+                puts "    #{td.name}: {}" + (td.since  ? " \#since #{td.since}" : "")
+            end
+            puts "\n\n\n"
+        end
 
 
-      # helper finds if method present in super
-      def is_method_in_super(model, cls, full_name)
-          while cls.superclass do
-              cls = model.objc_classes.find { |e| e.name == cls.superclass }
-              (cls.instance_methods + cls.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
-                  return true if full_name == (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
-              end
-          end
-          return false
-      end
+        # helper finds if method present in super
+        def is_method_in_super(model, cls, full_name)
+            while cls.superclass do
+                cls = model.objc_classes.find { |e| e.name == cls.superclass }
+                (cls.instance_methods + cls.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
+                    return true if full_name == (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
+                end
+            end
+            return false
+        end
 
-      # dumping classes and protocols
-      potential_classes_protos = [
-          ["classes", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCClass)}],
-          ["categories", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCCategory)}],
-          ["protocols", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCProtocol)}]
-      ]
-      potential_classes_protos.each do |title, entries|
-          next if entries.empty?
+        def is_method_in_protocol(model, cls, full_name)
+            # get all protocols
+            protocols = all_protocols(model, cls, {})
+            found = protocols.find { |prot, protc| (protc["methods"] || {})[full_name] != nil }
+            found != nil
+        end
 
-          # convert to array and sort to have values to be updated first
-          puts "\# #{title} to be updated:"
-          puts "#{title}:"
-          entries.each do |cls, data|
-              # find all method information
-              bad_methods = data
-              if bad_methods == nil
-                  # it is a new class/proto and information about it has to be extracted
-                  (cls.instance_methods + cls.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
-                      next unless m.name.count(':') > 1 || m.name.include?("With")
-                      bad_methods ||= []
-                      full_name = (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
-                      bad_methods.push([full_name, m.name.tr(':', '$')])
-                  end
-              end
+        # dumping classes and protocols
+        potential_classes_protos = [
+            ["classes", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCClass)}],
+            ["categories", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCCategory)}],
+            ["protocols", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCProtocol)}]
+        ]
+        potential_classes_protos.each do |title, entries|
+            next if entries.empty?
 
-              puts "    #{cls.java_name}:" + (!bad_methods ? " {}" : "") + (cls.since  ? " \#since #{cls.since}" : "")
-              next unless bad_methods
+            # convert to array and sort to have values to be updated first
+            puts "\# #{title} to be updated:"
+            puts "#{title}:"
+            entries.each do |cls, data|
+                # find all method information
+                bad_methods = data
+                is_new_entry = bad_methods == nil
+                bad_methods ||= []
+                if is_new_entry
+                    # it is a new class/proto and information about it has to be extracted
+                    (cls.instance_methods + cls.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
+                        next unless m.name.count(':') > 1 || m.name.include?("With")
+                        full_name = (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
+                        bad_methods.push([full_name, m.name.tr(':', '$')])
+                    end
+                end
 
-              # divide bad_methods into two set -- one with methods that has
-              # configuration in parent classes (will be added at bottom)
-              # as these probably not required to be configured. As once
-              # parrent class is configured it configuration will be inherited
-              if cls.is_a?(Bro::ObjCClass) && cls.superclass
-                  bad_methods_new = []
-                  bad_methods_inherited = []
-                  bad_methods.each do |full_name, name|
-                      if is_method_in_super(model, cls, full_name)
-                          bad_methods_inherited.push([full_name, name])
-                      else
-                          bad_methods_new.push([full_name, name])
-                      end
-                  end
-              else
-                  bad_methods_new = bad_methods
-                  bad_methods_inherited = []
-              end
+                # divide bad_methods into two set -- one with methods that has
+                # configuration in parent classes (will be added at bottom)
+                # as these probably not required to be configured. As once
+                # parrent class is configured it configuration will be inherited
+                if bad_methods && cls.is_a?(Bro::ObjCClass) && cls.superclass
+                    bad_methods_new = []
+                    bad_methods_inherited = []
+                    bad_methods.each do |full_name, name|
+                        if is_method_in_super(model, cls, full_name) || is_method_in_protocol(model, cls, full_name)
+                            bad_methods_inherited.push([full_name, name])
+                        else
+                            bad_methods_new.push([full_name, name])
+                        end
+                    end
+                else
+                    bad_methods_new = bad_methods
+                    bad_methods_inherited = []
+                end
 
-              puts "        methods:"
-              bad_methods_list = [[nil, bad_methods_new]]
-              bad_methods_list.push([" -- methods available in super, don't config if super is configured --", bad_methods_inherited]) unless bad_methods_inherited.empty?
-              bad_methods_list.each do |title, bad_methods|
-                  puts "                \##{title}" if title
-                  bad_methods.each do |full_name, name|
-                      puts "            '#{full_name}':"
-                      puts "                \#trim_after_first_colon: true" if (full_name.count(':') > 1)
-                      puts "                name: #{name}"
-                  end
-              end
-          end
-          puts "\n\n\n"
-      end
+                # skip suggestion if class is known and suggestions are only about methods already configured in super
+                next if !is_new_entry && bad_methods_new.empty?
+                if bad_methods.empty?
+                    puts "    #{cls.java_name}: {}" + (cls.since  ? " \#since #{cls.since}" : "")
+                    next
+                end
+
+                puts "    #{cls.java_name}:" + (cls.since  ? " \#since #{cls.since}" : "")
+                puts "        methods:"
+                bad_methods_list = [[nil, bad_methods_new]]
+                bad_methods_list.push([" -- methods available in super, don't config if super is configured --", bad_methods_inherited]) unless bad_methods_inherited.empty?
+                bad_methods_list.each do |title, bad_methods|
+                    puts "                \##{title}" if title
+                    bad_methods.each do |full_name, name|
+                        puts "            '#{full_name}':"
+                        puts "                \#trim_after_first_colon: true" if (full_name.count(':') > 1)
+                        puts "                name: #{name}"
+                    end
+                end
+            end
+            puts "\n\n\n"
+        end
     end
     # end of dumping suggestions
 end
