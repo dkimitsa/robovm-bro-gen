@@ -3620,7 +3620,7 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '15.0'
+$ios_version = '15.3'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
@@ -4690,7 +4690,7 @@ ARGV[1..-1].each do |yaml_file|
             (conf['protocols'] || cls.protocols).each do |prot_name|
                 prot = model.objc_protocols.find { |p| p.name == prot_name }
                 protc = model.get_protocol_conf(prot.name) if prot
-                if protc && !protc['skip_methods']
+                if protc && !protc['skip_methods'] && !protc['exclude']
                     result.push([prot, protc])
                     result += f(model, prot, protc)
                 end
@@ -4785,7 +4785,7 @@ ARGV[1..-1].each do |yaml_file|
         else
             protocols.each do |name|
                 c = model.get_protocol_conf(name)
-                l.push(model.objc_protocols.find { |p| p.name == name }.java_name) if c && !c['skip_implements']
+                l.push(model.objc_protocols.find { |p| p.name == name }.java_name) if c && !c['skip_implements'] && !c['exclude']
             end
         end
         l
@@ -4889,7 +4889,7 @@ ARGV[1..-1].each do |yaml_file|
         owner = h[:owner]
         next unless owner.is_a?(Bro::ObjCProtocol)
         c = model.get_protocol_conf(owner.name)
-        next unless !c['skip_adapter'] && !c['class']
+        next unless !c['skip_adapter'] && !c['class'] && !c['exclude']
         interface_name = c['name'] || owner.java_name
         owner_name = interface_name + 'Adapter'
         methods_lines = []
