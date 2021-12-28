@@ -5242,6 +5242,13 @@ ARGV[1..-1].each do |yaml_file|
                 (cls.instance_methods + cls.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
                     return true if full_name == (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
                 end
+
+                # check in super class categories
+                cat = model.objc_categories.find_all{ |c| c.owner == cls.name}.each do |c|
+                    (c.instance_methods + c.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
+                        return true if full_name == (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
+                    end
+                end
             end
             return false
         end
@@ -5298,8 +5305,6 @@ ARGV[1..-1].each do |yaml_file|
                     bad_methods_inherited = []
                 end
 
-                # skip suggestion if class is known and suggestions are only about methods already configured in super
-                next if !is_new_entry && bad_methods_new.empty?
                 if bad_methods.empty?
                     puts "    #{cls.java_name}: {}" + (cls.since  ? " \#since #{cls.since}" : "")
                     next
