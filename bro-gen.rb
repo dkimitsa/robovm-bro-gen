@@ -41,6 +41,16 @@ class String
         self
     end
 
+    def upcase_first_camelize
+        dup.upcase_first_camelize!
+    end
+
+    def upcase_first_camelize!
+        camelize!
+        upcase_first
+        self
+    end
+
     def underscore
         dup.underscore!
     end
@@ -5167,7 +5177,7 @@ ARGV[1..-1].each do |yaml_file|
     end
 
     #
-    # dump suggestions for potentialy new classes/enum/protocols
+    # dump suggestions for potentially new classes/enum/protocols
     if !$potential_new_entries.empty?
         puts "\n\n\n"
         puts "\# YAML file potentially missing entries suggestions\n"
