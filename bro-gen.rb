@@ -2202,7 +2202,7 @@ module Bro
             template_params = []
             template_params = owner.template_params if owner && (owner.is_a?(Bro::ObjCClass) || owner.is_a?(Bro::ObjCCategory))
 
-            # work with generics, drop pointers if any 
+            # work with generics, drop pointers if any
             generic_name = generic_name.tr('* ', '').sub(/__kindof/, '').sub(/id<(.*)>/, '\1')
             generics = generic_name.split(',')
             generic_types = []
@@ -2215,8 +2215,10 @@ module Bro
                     next
                 end
 
-                # not template param, resolve by name 
-                valid_generics = ['NSCopying', 'Class', '<', '>'].all? { |n| !g.include? n }
+                # not template param, resolve by name
+                # can't use Class in generic as ObjCClass is not inherited from NSObject as result
+                # collections will not be able to work with it
+                valid_generics = !(['Class', 'NSCopying'].include? g) && ['<', '>'].all? { |n| !g.include? n }
                 break unless valid_generics
 
                 if (g == 'id' || g == "NSObject")
@@ -2354,7 +2356,13 @@ module Bro
                     types = names.map { |e| resolve_type_by_name(e, protocol_first: true) }
                     if types.find_all(&:!).empty?
                         if types.size == 1
-                            types[0]
+                            if types[0].name == "NSObject"
+                                # do not return NSObject protocol as it is empty in RoboVM implementation and
+                                # this might affect marshaller and retain/release cycles
+                                resolve_type_by_name('NSObject')
+                            else
+                                types[0]
+                            end
                         else
                             ObjCId.new(self, types)
                         end
@@ -3155,7 +3163,7 @@ def property_to_java(model, owner, prop, props_conf, seen, adapter = false)
     conf = prop.is_static? ? model.get_conf_for_key("+" + prop.name, props_conf) : nil
     # sanity check for regexp, as + can get into name, just for compatibility mode
     conf = nil if conf && ((!conf['getter'].nil? && conf['getter'].start_with?('+')) || (!conf['setter'].nil? && conf['setter'].start_with?('+')) || (!conf['name'].nil? && conf['name'].start_with?('+')))
-    # if not found try to look for regural one (comp mode)
+    # if not found try to look for regular one (comp mode)
     conf ||= model.get_conf_for_key(prop.name, props_conf) || {}
 
     if !conf['exclude']
