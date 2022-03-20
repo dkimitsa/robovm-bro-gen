@@ -1902,6 +1902,8 @@ module Bro
             if @type == 'long' && @value == '9223372036854775807L'
                 # We assume NSIntegerMax
                 @value = 'Bro.IS_32BIT ? 0x7fffffffL : 0x7fffffffffffffffL'
+            elsif @type == 'double' && @value == '1.7976931348623157e+308'
+                @value = "Double.MAX_VALUE"
             end
         end
     end
@@ -3642,7 +3644,7 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '15.3'
+$ios_version = '15.4'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
@@ -4552,13 +4554,39 @@ ARGV[1..-1].each do |yaml_file|
     constants.each do |owner, vals|
         data = template_datas[owner] || {}
         data['name'] = owner
+
+        last_static_class = nil
+        # making sort stable
+        vals = vals.sort_by.with_index { |v_vconf, idx| [v_vconf[1]['static_class'] || "", idx]}
+
+
         constants_s = vals.map do |(v, vconf)|
+            lines = []
             name = vconf['name'] || v.name
             # TODO: Determine type more intelligently?
             visibility = vconf['visibility'] || 'public'
             java_type = vconf['type'] || v.type || 'double'
-            ["#{visibility} static final #{java_type} #{name} = #{v.value};"]
+
+            # static class grouping support
+            if last_static_class != vconf['static_class']
+                unless last_static_class.nil?
+                    # End last static class.
+                    lines.push("}\n")
+                end
+
+                # Start new static class.
+                last_static_class = vconf['static_class']
+
+                lines.push("public static class #{last_static_class} {")
+            end
+            indentation = last_static_class.nil? ? '' : '    '
+
+            lines += ["#{indentation}#{visibility} static final #{java_type} #{name} = #{v.value};"]
+            lines
         end.flatten.join("\n    ")
+
+        constants_s += "\n    }" unless last_static_class.nil?
+
         data['constants'] = (data['constants'] || '') + "\n    #{constants_s}\n    "
         data['imports'] = imports_s
         template_datas[owner] = data
