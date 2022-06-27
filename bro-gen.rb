@@ -3551,7 +3551,7 @@ class ClangPreprocessorInclude
 end
 
 
-def clang_preprocess(header, args)
+def clang_preprocess(headers, args)
     file_idx = 1
     include_stack = []
     tmp_dir = Dir.mktmpdir()
@@ -3567,7 +3567,18 @@ def clang_preprocess(header, args)
         f.puts "#undef CF_OPTIONS"
     end
 
-    lines = IO.popen(['clang', header, '-include', overrides_h] + args).readlines
+    headers_h = File.join(tmp_dir, '__headers.h')
+    File.open(headers_h, 'w') do |f|
+        headers.each do |header|
+            if (header.start_with?("#"))
+                f.puts header
+            else
+                f.puts "#include \"#{header}\""
+            end
+        end
+    end
+
+    lines = IO.popen(['clang', headers_h, '-include', overrides_h] + args).readlines
     lines.each do |line|
         if !line.start_with?('# ')
             # data line
@@ -3595,7 +3606,7 @@ def clang_preprocess(header, args)
             main_file = File.join(tmp_dir, file_name)
             include_stack.push ClangPreprocessorInclude.new(file_name, main_file)
         elsif args.include?('1')
-            raise "there is no main file while inluding header" if include_stack.empty?
+            raise "there is no main file while including header" if include_stack.empty?
 
             # entering into file
             write_file_name = File.join(tmp_dir, file_name + ".#{file_idx}.h")
@@ -3648,14 +3659,10 @@ $ios_version = '15.4'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
-sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS#{$ios_version}.sdk"
+sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
 
 # environment variables that enables debug/tools modules 
 $dbg_dump_inline_fn = ENV.has_key?('BRO_DUMP_INLINE')  # generates inline functions with their original code in comments 
-
-unless File.exist?(sysroot)
-    sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
-end
 
 script_dir = File.expand_path(File.dirname(__FILE__))
 target_dir = ARGV[0]
@@ -3777,12 +3784,17 @@ ARGV[1..-1].each do |yaml_file|
     imports_s = "\n" + imports.map { |im| "import #{im};" }.join("\n") + "\n"
 
     index = FFI::Clang::Index.new
-    clang_preprocess_args = ['-E', '-dD', '-arch', 'arm64', '-fblocks', '-isysroot', sysroot]
-    clang_args = ['-arch', 'arm64', '-mthumb', '-miphoneos-version-min', $ios_version, '-fblocks']
+    clang_preprocess_args = ['-E', '-dD', '-target', "arm64-apple-ios#{$ios_version}", '-fblocks', '-isysroot', sysroot]
+    clang_args = ['-target', "arm64-apple-ios#{$ios_version}", '-fblocks']
 
-    headers[1..-1].each do |e|
-        clang_preprocess_args.push('-include')
-        clang_preprocess_args.push(File.join(header_root, e))
+    clang_headers = []
+    headers.each do |e|
+        if (e.start_with?("#"))
+            # push as it is without extending the path
+            clang_headers.push(e)
+        else
+            clang_headers.push(File.join(header_root, e))
+        end
     end
 
     framework_roots.each do |e|
@@ -3795,7 +3807,7 @@ ARGV[1..-1].each do |yaml_file|
 
     # preprocess files using clang to expand all macro to be able better understand
     # attributes and enum/types definitions
-    main_file = clang_preprocess(File.join(header_root, headers[0]), clang_preprocess_args)
+    main_file = clang_preprocess(clang_headers, clang_preprocess_args)
 
     # START of potential support code block
     # this map will contain all potential entries that are missing (such as class is not covered in yaml)
@@ -3814,6 +3826,9 @@ ARGV[1..-1].each do |yaml_file|
 
     # now translate pre-processed
     translation_unit = index.parse_translation_unit(main_file, clang_args, [], detailed_preprocessing_record: true)
+    translation_unit.diagnostics.each do |e|
+        $stderr.puts "#{e.severity} #{e.spelling}" if (e.severity == :error)
+    end
 
     model = Bro::Model.new conf
     model.process(translation_unit.cursor)
@@ -4886,7 +4901,7 @@ ARGV[1..-1].each do |yaml_file|
         end
         data['visibility'] = c['visibility'] || 'public'
         data['extends'] = c['extends'] || (cls.superclass && (model.conf_classes[cls.superclass] || {})['name'] || cls.superclass) || 'ObjCObject'
-        # generics: adding template arguments to inherited class 
+        # generics: adding template arguments to inherited class
         # FIXME: add option to supres
         if cls.superclass && cls.super_template_args
             super_cls = model.objc_classes.find{ |e| e.name == cls.superclass}
