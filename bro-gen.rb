@@ -3263,7 +3263,8 @@ end
 
 # configuration for method is passed explicitly as parameter now and has to be resolved externally
 # this is done to allow method configuration to be inherited from parent classes
-def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false, prot_as_class = false, inherited_initializers = false)
+def method_to_java(model, owner_name, owner, method_owner, method, conf, seen, adapter = false, prot_as_class = false,
+                   inherited_initializers = false)
     return [[], []] if method.is_outdated? || method.is_a?(Bro::ObjCClassMethod) && owner.is_a?(Bro::ObjCProtocol)
 
     return [[], []] if owner.is_a?(Bro::ObjCProtocol) && is_method_like_init?(owner, method)
@@ -3395,7 +3396,7 @@ def method_to_java(model, owner_name, owner, method, conf, seen, adapter = false
                 method_lines << '}'
             end
 
-            visibility = 'private' unless owner.is_a?(Bro::ObjCProtocol) && prot_as_class == false
+            visibility = 'private' unless method_owner.is_a?(Bro::ObjCProtocol) || owner.is_a?(Bro::ObjCProtocol) && prot_as_class == false
         end
 
         if ((is_static && static_constructor) || (is_init?(owner, method) && !static_constructor_name.nil?))
@@ -4999,13 +5000,13 @@ ARGV[1..-1].each do |yaml_file|
         end
 
 
-        prot_members.each do |(members, c)|
+        prot_members.each do |(members, c, prot)|
             members.find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
                 # resolve configuration for method
                 full_name = (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
                 members_conf = c['methods'] || {}
                 method_conf = model.get_conf_for_key(full_name, members_conf)
-                a = method_to_java(model, owner_name, owner, m, method_conf || {}, {}, true, c['class'])
+                a = method_to_java(model, owner_name, owner, prot, m, method_conf || {}, {}, true, c['class'])
                 methods_lines.concat(a[0])
             end
             # TODO: temporaly don't add static properties to interfaces
@@ -5081,7 +5082,7 @@ ARGV[1..-1].each do |yaml_file|
                 end
             end
 
-            return conf if conf
+            return conf, cls if conf
 
             # switch to super
             super_cls = nil
@@ -5098,7 +5099,7 @@ ARGV[1..-1].each do |yaml_file|
                 prots.each do |(prot, protc)|
                     members_conf = protc[conf_key] || {}
                     conf = model.get_conf_for_key(full_name, members_conf)
-                    return conf unless !conf || (conf['exclude'] == true && conf['scope'] != 'global' && prot != member_owner)
+                    return conf, prot unless !conf || (conf['exclude'] == true && conf['scope'] != 'global' && prot != member_owner)
                 end
             end
 
@@ -5106,7 +5107,7 @@ ARGV[1..-1].each do |yaml_file|
             cls_conf = super_cls_conf
         end
 
-        return nil
+        return nil, nil
     end
 
     members.values.each do |h|
@@ -5121,28 +5122,29 @@ ARGV[1..-1].each do |yaml_file|
         h[:members].each do |(members, members_conf, members_owner)|
             members.find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
                 # resolve method conf
+                method_owner = members_owner
                 full_name = (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
                 inherited_initializers = members_conf['inherited_initializers']
                 if inherited_initializers
                     # methods are initializers that were inherited from super classes
 
                     # from owner till members_owner (class it was inherited from) and check configs for exact match
-                    method_conf = resolve_member_config(model, owner, full_name, member_owner: members_owner, bottom_limit: members_owner, exact_match: true)
+                    method_conf, method_owner = resolve_member_config(model, owner, full_name, member_owner: members_owner, bottom_limit: members_owner, exact_match: true)
 
                     # if not found -- then its configuration was not overridden in subclasses (above class this initializer was exposed from)
                     # resolve it as for member owner itself
                     if !method_conf
-                        method_conf = resolve_member_config(model, members_owner, full_name, member_owner: members_owner, include_protocols: true)
+                        method_conf, method_owner = resolve_member_config(model, members_owner, full_name, member_owner: members_owner, include_protocols: true)
                     end
                 elsif members_owner.is_a?(Bro::ObjCProtocol) && owner.is_a?(Bro::ObjCClass)
                     # methods were added from protocol this class implements
 
                     # check only in owner, don't go to super -- this to allow method config to be overridden in class that implements protocol
-                    method_conf = resolve_member_config(model, owner, full_name, member_owner: members_owner, bottom_limit: owner, exact_match: true)
+                    method_conf, method_owner = resolve_member_config(model, owner, full_name, member_owner: members_owner, bottom_limit: owner, exact_match: true)
 
                     # if no override -- resolve in protocol itself
                     if !method_conf
-                        method_conf = resolve_member_config(model, members_owner, full_name, member_owner: members_owner)
+                        method_conf, method_owner = resolve_member_config(model, members_owner, full_name, member_owner: members_owner)
                     end
                 elsif owner.is_a?(Bro::ObjCCategory)
                     conf = members_conf["methods"] || {}
@@ -5152,10 +5154,10 @@ ARGV[1..-1].each do |yaml_file|
                   method_conf = model.get_conf_for_key(full_name, conf)
                 else
                     # owner methods -- resolve using inherited
-                    method_conf = resolve_member_config(model, owner, full_name, member_owner: members_owner, include_protocols: true)
+                    method_conf, method_owner = resolve_member_config(model, owner, full_name, member_owner: members_owner, include_protocols: true)
                 end
 
-                a = method_to_java(model, owner_name, owner, m, method_conf || {}, seen, false, members_conf['class'], inherited_initializers)
+                a = method_to_java(model, owner_name, owner, method_owner, m, method_conf || {}, seen, false, members_conf['class'], inherited_initializers)
                 methods_lines.concat(a[0])
                 constructors_lines.concat(a[1])
 
