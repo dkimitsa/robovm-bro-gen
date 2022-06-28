@@ -1824,7 +1824,9 @@ module Bro
                 # find out const status, check typedefs 
                 t = @type
                 if @type.kind == :type_typedef
-                    td = @model.typedefs.find { |e| e.name == @type.spelling }
+                    td_name = type.spelling
+                    td_name = td_name.gsub(/__strong\s*/, '')
+                    td = @model.typedefs.find { |e| e.name == td_name }
                     t = td.typedef_type if td
                 end
                 @const = t.spelling.match(/\bconst\b/) != nil
@@ -2272,6 +2274,7 @@ module Bro
             return Bro.builtins_by_type_kind(:type_void) unless type
             name = type.spelling
             name = name.gsub(/\s*\bconst\b\s*/, '')
+            name = name.gsub(/__strong\s*/, '')
             name = name.sub(/^(struct|union|enum)\s*/, '')
 
             gen_name = name !~ /^(id|NSObject)<.*>$/ ? name.gsub(/<.*>/, '').sub(/ *_(nonnull|nullable|null_unspecified) /i, '') : name
@@ -2628,6 +2631,7 @@ module Bro
         def get_typed_enum_conf(type)
             name = type.spelling
             name = name.gsub(/\s*\bconst\b\s*/, '')
+            name = name.gsub(/__strong\s*/, '')
             name = name.sub(/^(struct|union|enum)\s*/, '')
             name = name.sub(/ *_(nonnull|nullable|null_unspecified) /i, '')
             e = get_conf_for_key(name, @conf_typed_enums)
