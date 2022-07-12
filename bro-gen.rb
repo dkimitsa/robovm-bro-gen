@@ -3400,7 +3400,8 @@ def method_to_java(model, owner_name, owner, method_owner, method, conf, seen, a
                 method_lines << '}'
             end
 
-            visibility = 'private' unless method_owner.is_a?(Bro::ObjCProtocol) || owner.is_a?(Bro::ObjCProtocol) && prot_as_class == false
+            visibility = 'private' unless !is_static && method_owner.is_a?(Bro::ObjCProtocol) ||
+                                          owner.is_a?(Bro::ObjCProtocol) && prot_as_class == false
         end
 
         if ((is_static && static_constructor) || (is_init?(owner, method) && !static_constructor_name.nil?))
