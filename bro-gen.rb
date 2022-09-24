@@ -133,14 +133,20 @@ module Bro
             return false if attrib
 
             # check if available
-            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.version != nil && (e.platform == nil || e.platform == $target_platform) }
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.platform == $target_platform }
             if attrib
-                # TODO: there is a mess in platforms (macos, ios, tvos, watchos) so checking only ios now
-                $ios_version && attrib.version != -1 && attrib.version <= $ios_version.to_f || false
-            else
-                # nothing specified so available
-                true
+                # availability for $target_platform specified 
+                # -1 means that is not available for this platform 
+                return attrib.version == nil || (attrib.version != -1 && attrib.version <= $ios_version.to_f)
             end
+            attrib = @attributes.find { |e| e.is_a?(AvailableAttribute) && e.platform == nil && e.version != nil }
+            if attrib
+                # availability without platform but with version 
+                return attrib.version != -1 && attrib.version <= $ios_version.to_f
+            end
+
+            # nothing specified so available
+            true
         end
 
         def is_outdated?
@@ -4886,7 +4892,7 @@ ARGV[1..-1].each do |yaml_file|
 
     model.objc_classes.find_all { |cls| !cls.is_opaque? } .each do |cls|
         c = model.get_class_conf(cls.name)
-        if !c  && model.is_included?(cls) && cls.is_available? && !cls.is_outdated?
+        if !c  && model.is_included?(cls) && cls.is_available? && !cls.is_outdated? && !cls.is_opaque?
             $stderr.puts "CONV: missing class #{cls.java_name}"
         end
 
@@ -4930,7 +4936,7 @@ ARGV[1..-1].each do |yaml_file|
 
     model.objc_protocols.each do |prot|
         c = model.get_protocol_conf(prot.name)
-        if !c  &&  model.is_included?(prot) && !prot.is_outdated?
+        if !c  &&  model.is_included?(prot) && prot.is_available? && !prot.is_outdated? && !prot.is_opaque?
             $stderr.puts "CONV: missing protocol #{prot.java_name}"
         end
         next unless c && !c['exclude'] && !prot.is_outdated?
