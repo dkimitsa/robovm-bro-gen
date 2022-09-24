@@ -1098,7 +1098,7 @@ module Bro
 
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
-                when :cursor_unexposed_expr, :cursor_struct, :cursor_type_ref
+                when :cursor_unexposed_expr, :cursor_struct, :cursor_union, :cursor_type_ref
                     # ignored
                 when 417
                     # ignored CXCursor_VisibilityAttr = 417,
@@ -3661,7 +3661,7 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '15.4'
+$ios_version = '16'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
