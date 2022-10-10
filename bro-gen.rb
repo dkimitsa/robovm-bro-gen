@@ -177,6 +177,9 @@ module Bro
             attrib = @attributes.find { |e| e.is_a?(KeyValueAttribute) && e.key == key }
             attrib.value if attrib
         end
+        def full_name
+            @name
+        end
     end
 
     class Pointer < Entity
@@ -923,6 +926,9 @@ module Bro
         def initialize(model, cursor, owner)
             super(model, cursor, owner)
         end
+        def full_name
+            '-' + @name
+        end
     end
     class ObjCClassMethod < ObjCMethod
         def initialize(model, cursor, owner)
@@ -934,6 +940,10 @@ module Bro
 
         def is_class_property?
             @class_property
+        end
+
+        def full_name
+            '+' + @name
         end
     end
 
@@ -998,6 +1008,10 @@ module Bro
         def types
             [@type]
         end
+
+        def full_name
+            is_static? ? ('+' + @name) : @name
+        end
     end
 
     class ObjCMemberHost < Entity
@@ -1022,6 +1036,20 @@ module Bro
                 end
                 m
             end
+        end
+
+        def containsMember?(member)
+            fn = member.full_name
+            if member.is_a?(ObjCProperty)
+                r = @properties.any? { |p| p.full_name == fn }
+            elsif member.is_a?(ObjCClassMethod)
+                r = @class_methods.any? { |p| p.full_name == fn }
+            elsif member.is_a?(ObjCInstanceMethod)
+                r = @instance_methods.any? { |p| p.full_name == fn }
+            else
+                false
+            end
+            r
         end
     end
 
@@ -3754,13 +3782,13 @@ ARGV[1..-1].each do |yaml_file|
 
         c = YAML.load_file(f)
         # Excluded all classes in included config
-        c_classes = (c['classes'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+        c_classes = (c['classes'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['transitive'] = true; h[k] = v; h }
         conf['classes'] = c_classes.merge(conf['classes'] || {})
-        c_protocols = (c['protocols'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+        c_protocols = (c['protocols'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['transitive'] = true; h[k] = v; h }
         conf['protocols'] = c_protocols.merge(conf['protocols'] || {})
-        c_enums = (c['enums'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+        c_enums = (c['enums'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['transitive'] = true; h[k] = v; h }
         conf['enums'] = c_enums.merge(conf['enums'] || {})
-        c_typed_enums = (c['typed_enums'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+        c_typed_enums = (c['typed_enums'] || {}).each_with_object({}) { |(k, v), h| v ||= {}; v['transitive'] = true; h[k] = v; h }
         conf['typed_enums'] = c_typed_enums.merge(conf['typed_enums'] || {})
         conf['typedefs'] = (c['typedefs'] || {}).merge(conf['typedefs'] || {})
         conf['structdefs'] = (c['structdefs'] || {}).merge(conf['structdefs'] || {})
@@ -3771,11 +3799,11 @@ ARGV[1..-1].each do |yaml_file|
             # copy and exclude also functions/values/consts other than trap
             # it is required for AudioToolBox module as it includes AudioUnit entities
             # which causes baunch of duplicates to appear in ToolBox from AudioUnit
-            c_functions = (c['functions'] || {}).find_all{|k, v| v['name'] != 'Function__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+            c_functions = (c['functions'] || {}).find_all{|k, v| v['name'] != 'Function__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['transitive'] = true; h[k] = v; h }
             conf['functions'] = c_functions.merge(conf['functions'] || {})
-            c_values = (c['values'] || {}).find_all{|k, v| v['name'] != 'Value__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+            c_values = (c['values'] || {}).find_all{|k, v| v['name'] != 'Value__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['transitive'] = true; h[k] = v; h }
             conf['values'] = c_values.merge(conf['values'] || {})
-            c_constants = (c['constants'] || {}).find_all{|k, v| v['name'] != 'Constant__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['exclude'] = true; h[k] = v; h }
+            c_constants = (c['constants'] || {}).find_all{|k, v| v['name'] != 'Constant__#{g[0]}'}.each_with_object({}) { |(k, v), h| v ||= {}; v['transitive'] = true; h[k] = v; h }
             conf['constants'] = c_constants.merge(conf['constants'] || {})
         end
 
@@ -4016,7 +4044,7 @@ ARGV[1..-1].each do |yaml_file|
     model.enums.each do |enum|
         next if !enum.is_available? || enum.is_outdated?
         c = model.get_enum_conf(enum.name)
-        if c && !c['exclude']
+        if c && !c['exclude'] && !c['transitive']
             data = {}
             java_name = enum.java_name
             bits = enum.is_options? || c['bits']
@@ -4112,7 +4140,7 @@ ARGV[1..-1].each do |yaml_file|
         # save to potential new entry
         add_potential_new_entry(struct, nil) if !c && model.is_included?(struct) && !struct.is_outdated?
 
-        if c && !c['exclude'] && !struct.is_outdated?
+        if c && !c['exclude'] && !c['transitive'] && !struct.is_outdated?
             name = c['name'] || struct.name
             template_datas[name] = struct.is_opaque? ? opaque_to_java(model, {}, name, c) : struct_to_java(model, {}, name, struct, c)
         end
@@ -4123,7 +4151,7 @@ ARGV[1..-1].each do |yaml_file|
         # save to potential new entry
         add_potential_new_entry(td, nil) if !c && td.struct && model.is_included?(td) && !td.is_outdated?
 
-        next unless c && !c['exclude']
+        next unless c && !c['exclude'] && !c['transitive']
         struct = td.struct
         if struct && struct.is_opaque?
             struct = model.structs.find { |e| e.name == td.struct.name } || td.struct
@@ -4137,7 +4165,7 @@ ARGV[1..-1].each do |yaml_file|
     values = {}
     model.global_values.find_all { |v| v.is_available? && !v.is_outdated? }.each do |v|
         vconf = v.conf
-        if vconf && !vconf['exclude']
+        if vconf && !vconf['exclude'] && !vconf['transitive']
             owner = vconf['class'] || default_class
             values[owner] = (values[owner] || []).push([v, vconf])
         end
@@ -4549,7 +4577,7 @@ ARGV[1..-1].each do |yaml_file|
     constants = {}
     model.constant_values.each do |v|
         vconf = model.get_constant_conf(v.name)
-        if vconf && !vconf['exclude']
+        if vconf && !vconf['exclude'] && !vconf['transitive']
             owner = vconf['class'] || default_class
             constants[owner] = (constants[owner] || []).push([v, vconf])
         end
@@ -4627,7 +4655,7 @@ ARGV[1..-1].each do |yaml_file|
     def inherited_initializers(model, owner, conf)
         def g(model, owner, cls, conf, seen)
             r = []
-            return r if !cls.is_a?(Bro::ObjCClass)
+            return r if !cls.is_a?(Bro::ObjCClass) || conf["exclude"] == true
 
             inits = []
             methods_conf = conf['methods'] || {}
@@ -4660,7 +4688,7 @@ ARGV[1..-1].each do |yaml_file|
     def inherited_static_items(model, owner, conf)
         def g(model, owner, cls, conf, seen, seen_props)
             r = []
-            return r if !cls.is_a?(Bro::ObjCClass)
+            return r if !cls.is_a?(Bro::ObjCClass) || conf["exclude"] == true
 
             # duplicate static methods from
             statics = []
@@ -4708,7 +4736,7 @@ ARGV[1..-1].each do |yaml_file|
         # before skipping check if this is potentialy missing class or protocol from yaml file
         add_potential_new_entry(cls, nil) if !c && cls.is_available? && !cls.is_opaque? && !cls.is_outdated? && model.is_included?(cls)
 
-        next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
+        next unless c && !c['exclude'] && !c['transitive'] && cls.is_available? && !cls.is_outdated?
         owner = c['name'] || cls.java_name
         members[owner] = members[owner] || { owner: cls, owner_name: owner, members: [], conf: c }
         members[owner][:members].push([cls.instance_methods + cls.class_methods + cls.properties, c, cls])
@@ -4717,7 +4745,7 @@ ARGV[1..-1].each do |yaml_file|
     # add initializers/static items from super classes if these are missing
     model.objc_classes.each do |cls|
         c = model.get_class_conf(cls.name)
-        next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
+        next unless c && !c['exclude'] && !c['transitive'] && cls.is_available? && !cls.is_outdated?
         owner = c['name'] || cls.java_name
 
         # add inits from inherited classses
@@ -4738,11 +4766,14 @@ ARGV[1..-1].each do |yaml_file|
         owner = nil
         if owner_cls
             owner_conf = model.get_class_conf(owner_cls.name)
-            if owner_conf && !owner_conf['exclude'] && owner_cls.is_available? && !owner_cls.is_outdated?
+            if owner_conf && !owner_conf['exclude'] && !owner_conf['transitive'] && owner_cls.is_available? && !owner_cls.is_outdated?
                 owner = owner_conf['name'] || owner_cls.java_name
                 members[owner] = members[owner] || { owner: owner_cls, owner_name: owner, members: [], conf: owner_conf }
                 members[owner][:members].push([cat.instance_methods + cat.class_methods + cat.properties, owner_conf, owner_cls])
                 owner_cls.protocols = owner_cls.protocols + cat.protocols
+                owner_cls.instance_methods = owner_cls.instance_methods + cat.instance_methods
+                owner_cls.class_methods = owner_cls.class_methods + cat.class_methods
+                owner_cls.properties = owner_cls.properties + cat.properties
             end
         end
         unassigned_categories.push(cat) if !owner && model.is_included?(cat)
@@ -4751,7 +4782,7 @@ ARGV[1..-1].each do |yaml_file|
         c = model.get_category_conf("#{cat.name}@#{cat.owner}")
         c = model.get_category_conf(cat.name) unless c
         c = model.get_category_conf(cat.owner) unless c
-        if c && !c['exclude']
+        if c && !c['exclude'] && !c['transitive']
             owner = c['name'] || cat.java_name
             members[owner] = members[owner] || { owner: cat, owner_name: owner, members: [], conf: c }
             members[owner][:members].push([cat.instance_methods + cat.class_methods + cat.properties, c, cat])
@@ -4760,31 +4791,32 @@ ARGV[1..-1].each do |yaml_file|
         end
     end
 
-    def all_protocols(model, cls, conf)
-        def f(model, cls, conf)
+    # also returns excluded when its required to check if method in class from protocol to be excluded  
+    def all_protocols(model, cls, conf, include_excluded: false)
+        def f(model, cls, conf, include_excluded)
             result = []
             return result if conf.nil?
             (conf['protocols'] || cls.protocols).each do |prot_name|
                 prot = model.objc_protocols.find { |p| p.name == prot_name }
                 protc = model.get_protocol_conf(prot.name) if prot
-                if protc && !protc['skip_methods']
+                if protc && !protc['skip_methods'] && (include_excluded || protc["exclude"] != true)
                     result.push([prot, protc])
-                    result += f(model, prot, protc)
+                    result += f(model, prot, protc, include_excluded)
                 end
             end
             result
         end
 
-        def g(model, cls, conf)
+        def g(model, cls, conf, include_excluded)
             r = []
             if !cls.is_a?(Bro::ObjCProtocol) && cls.superclass
                 supercls = model.objc_classes.find { |e| e.name == cls.superclass }
                 super_conf = model.get_class_conf(supercls.name)
-                r = g(model, supercls, super_conf)
+                r = g(model, supercls, super_conf, include_excluded)
             end
-            r + f(model, cls, conf)
+            r + f(model, cls, conf, include_excluded)
         end
-        g(model, cls, conf).uniq { |e| e[0].name }
+        g(model, cls, conf, include_excluded).uniq { |e| e[0].name }
     end
 
     # returns inherited class(static) methods/properties from protocols.
@@ -4818,10 +4850,31 @@ ARGV[1..-1].each do |yaml_file|
         r
     end
 
+    # same as [prot.instance_methods + prot.class_methods + prot.properties, protc, prot]
+    # but don't adds excluded mehtods
+    def all_not_excluded(cls, prot, protc)
+        methods_conf = protc['methods'] || {}
+        props_conf = protc['properties'] || {}
+        r = []
+
+        (prot.instance_methods + prot.class_methods).each do |method|
+            full_name = method.full_name
+            mconf = methods_conf[full_name]
+            r.push(method) unless mconf && mconf["exclude"] == true
+        end
+        prot.properties.each do |prop|
+            full_name = prop.full_name
+            pconf = props_conf[full_name]
+            r.push(prop) unless pconf && pconf["exclude"] == true
+        end
+
+        r
+    end
+
     # Add all methods defined by protocols to all implementing classes
     model.objc_classes.find_all { |cls| !cls.is_opaque? }.each do |cls|
         c = model.get_class_conf(cls.name)
-        next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
+        next unless c && !c['exclude'] && !c['transitive'] && cls.is_available? && !cls.is_outdated?
 
         owner = c['name'] || cls.java_name
         prots = all_protocols(model, cls, c)
@@ -4834,7 +4887,7 @@ ARGV[1..-1].each do |yaml_file|
         end
         prots.each do |(prot, protc)|
             members[owner] = members[owner] || { owner: cls, owner_name: owner, members: [], conf: c }
-            members[owner][:members].push([prot.instance_methods + prot.class_methods + prot.properties, protc, prot])
+            members[owner][:members].push([all_not_excluded(cls, prot, protc), protc, prot])
         end
         # add statics
         if parent_prots
@@ -4846,7 +4899,7 @@ ARGV[1..-1].each do |yaml_file|
     # Add all methods defined by protocols to all implementing converted protocol classes
     model.objc_protocols.find_all do |cls|
         c = model.get_protocol_conf(cls.name)
-        next unless c && !c['exclude'] && c['class']
+        next unless c && !c['exclude'] && !c['transitive'] && c['class']
         owner = c['name'] || cls.java_name
         prots = all_protocols(model, cls, c)
         prots.each do |(prot, protc)|
@@ -4862,7 +4915,7 @@ ARGV[1..-1].each do |yaml_file|
         else
             protocols.each do |name|
                 c = model.get_protocol_conf(name)
-                l.push(model.objc_protocols.find { |p| p.name == name }.java_name) if c && !c['skip_implements']
+                l.push(model.objc_protocols.find { |p| p.name == name }.java_name) if c && c['exclude'] != true && c['skip_implements'] != true
             end
         end
         l
@@ -4896,7 +4949,7 @@ ARGV[1..-1].each do |yaml_file|
             $stderr.puts "CONV: missing class #{cls.java_name}"
         end
 
-        next unless c && !c['exclude'] && cls.is_available? && !cls.is_outdated?
+        next unless c && !c['exclude'] && !c['transitive'] && cls.is_available? && !cls.is_outdated?
         name = c['name'] || cls.java_name
         runtime_name = cls.valueAttributeForKey("objc_runtime_name")
         runtime_name = "(\"#{runtime_name}\")" if runtime_name
@@ -4912,9 +4965,18 @@ ARGV[1..-1].each do |yaml_file|
             data['ptr'] = "public static class #{cls.java_name}Ptr#{param_decl} extends Ptr<#{cls.java_name}#{param_list}, #{cls.java_name}Ptr#{param_list}> {}"
         end
         data['visibility'] = c['visibility'] || 'public'
-        data['extends'] = c['extends'] || (cls.superclass && (model.conf_classes[cls.superclass] || {})['name'] || cls.superclass) || 'ObjCObject'
+        # resolve super_class -- skip ones that are marked as excluded
+        def resolve_super(model, c)
+            while (c && c.superclass)
+                conf = model.conf_classes[c.superclass] || {}
+                return conf['name'] || c.superclass if conf['exclude'] != true
+                c = model.objc_classes.find{ |e| e.name == c.superclass}
+            end
+            'ObjCObject'
+        end
+        data['extends'] = c['extends'] || resolve_super(model, cls)
         # generics: adding template arguments to inherited class
-        # FIXME: add option to supres
+        # FIXME: add option to super
         if cls.superclass && cls.super_template_args
             super_cls = model.objc_classes.find{ |e| e.name == cls.superclass}
             if super_cls && !super_cls.template_params.empty?
@@ -4939,7 +5001,7 @@ ARGV[1..-1].each do |yaml_file|
         if !c  &&  model.is_included?(prot) && prot.is_available? && !prot.is_outdated? && !prot.is_opaque?
             $stderr.puts "CONV: missing protocol #{prot.java_name}"
         end
-        next unless c && !c['exclude'] && !prot.is_outdated?
+        next unless c && !c['exclude'] && !c['transitive'] && !prot.is_outdated?
         name = c['name'] || prot.java_name
         data = template_datas[name] || {}
         data['name'] = name
@@ -5045,7 +5107,8 @@ ARGV[1..-1].each do |yaml_file|
     # conf_key          -- key to find methods configuration. reserved for future use. e.g. in case properties to be resolved similar way
     # exact_match       -- specifies if configuration key shall match full name (no wildcards to be used), otherwise wildcards allowed
     # include_protocols -- true if configuration to be looked in adopted protocols as well
-    def resolve_member_config(model, owner, full_name, member_owner: nil, bottom_limit: nil, conf_key: "methods", exact_match: false, include_protocols: false)
+    def resolve_member_config(model, owner, member, member_owner: nil, bottom_limit: nil, conf_key: "methods", exact_match: false, include_protocols: false)
+        full_name = member.full_name
         cls = owner
         cls_conf = model.get_class_conf(cls.name) if cls.is_a?(Bro::ObjCClass)
         cls_conf = model.get_protocol_conf(cls.name) if cls.is_a?(Bro::ObjCProtocol)
@@ -5064,36 +5127,40 @@ ARGV[1..-1].each do |yaml_file|
         # walk from owner till member_owner(bottom_limit) (exclusive)
         while cls != nil && cls != bottom_limit && cls_conf != nil
             members_conf = cls_conf[conf_key] || {}
-            if cls == owner
-                pmembers_conf = cls_conf[conf_key + "_private"] || {}
-                members_conf = members_conf.merge(pmembers_conf)
-            end
-            conf = nil
-            if exact_match
-                conf = members_conf[full_name]
-                if conf == nil
-                    # no exact match, perform pattern match for global scope overrides
+            if cls.containsMember?(member)
+                if cls == owner
+                    pmembers_conf = cls_conf[conf_key + "_private"] || {}
+                    members_conf = members_conf.merge(pmembers_conf)
+                end
+                conf = nil
+                if exact_match
+                    conf = members_conf[full_name]
+                    if conf == nil
+                        # no exact match, perform pattern match for global scope overrides
+                        conf = model.get_conf_for_key(full_name, members_conf)
+
+                        # ignore pattern match if it is scope is not implicitly set to global ( so all init* will not be applied if not forced to be global)
+                        # ignore scope rule in case config comes from member_owner (e.g. it config from method origin)
+                        if cls != member_owner && conf && conf["scope"] != "global"
+                            conf = nil
+                        end
+                    end
+                else
+                    # perform pattern match
                     conf = model.get_conf_for_key(full_name, members_conf)
 
-                    # ignore pattern match if it is scope is not implicitly set to global ( so all init* will not be applied if not forced to be global)
-                    # ignore scope rule in case config comes from member_owner (e.g. it config from method origin)
-                    if cls != member_owner && conf && conf["scope"] != "global"
+                    # special case to drop pattern match result:
+                    # drop all "exclude" pattern match if it is scope is not implicitly set to global (otherwise any {'-.*' : {"exclude": true}} config will drop all methods)
+                    # ignore scope rule in case config comes from member_owner or owner (e.g. it config from method origin)
+                    if cls != member_owner && cls != owner && conf && conf["exclude"] == true && conf["scope"] != "global"
                         conf = nil
                     end
                 end
-            else
-                # perform pattern match
-                conf = model.get_conf_for_key(full_name, members_conf)
 
-                # special case to drop pattern match result:
-                # drop all "exclude" pattern match if it is scope is not implicitly set to global (otherwise any {'-.*' : {exclude: true}} config will drop all methods)
-                # ignore scope rule in case config comes from member_owner or owner (e.g. it config from method origin)
-                if cls != member_owner && cls != owner && conf && conf["exclude"] == true && conf["scope"] != "global"
-                    conf = nil
-                end
+
+                return conf, cls if conf
+                return {"exclude" => true} if cls_conf["exclude"] == true
             end
-
-            return conf, cls if conf
 
             # switch to super
             super_cls = nil
@@ -5105,12 +5172,15 @@ ARGV[1..-1].each do |yaml_file|
 
             # check if there is a config in protocol this class implements
             if cls.is_a?(Bro::ObjCClass) && include_protocols
-                prots = all_protocols(model, cls, cls_conf)
-                prots -= all_protocols(model, super_cls, super_cls_conf) if super_cls && super_cls_conf
+                prots = all_protocols(model, cls, cls_conf, include_excluded: true)
+                prots -= all_protocols(model, super_cls, super_cls_conf, include_excluded: true) if super_cls && super_cls_conf
                 prots.each do |(prot, protc)|
-                    members_conf = protc[conf_key] || {}
-                    conf = model.get_conf_for_key(full_name, members_conf)
-                    return conf, prot unless !conf || (conf['exclude'] == true && conf['scope'] != 'global' && prot != member_owner)
+                    if prot.containsMember?(member)
+                        members_conf = protc[conf_key] || {}
+                        conf = model.get_conf_for_key(full_name, members_conf)
+                        return conf, prot unless !conf || (conf['exclude'] == true && conf['scope'] != 'global' && prot != member_owner)
+                        return {"exclude" => true} if protc["exclude"] == true
+                    end
                 end
             end
 
@@ -5140,22 +5210,22 @@ ARGV[1..-1].each do |yaml_file|
                     # methods are initializers that were inherited from super classes
 
                     # from owner till members_owner (class it was inherited from) and check configs for exact match
-                    method_conf, method_owner = resolve_member_config(model, owner, full_name, member_owner: members_owner, bottom_limit: members_owner, exact_match: true)
+                    method_conf, method_owner = resolve_member_config(model, owner, m, member_owner: members_owner, bottom_limit: members_owner, exact_match: true)
 
                     # if not found -- then its configuration was not overridden in subclasses (above class this initializer was exposed from)
                     # resolve it as for member owner itself
                     if !method_conf
-                        method_conf, method_owner = resolve_member_config(model, members_owner, full_name, member_owner: members_owner, include_protocols: true)
+                        method_conf, method_owner = resolve_member_config(model, members_owner, m, member_owner: members_owner, include_protocols: true)
                     end
                 elsif members_owner.is_a?(Bro::ObjCProtocol) && owner.is_a?(Bro::ObjCClass)
                     # methods were added from protocol this class implements
 
                     # check only in owner, don't go to super -- this to allow method config to be overridden in class that implements protocol
-                    method_conf, method_owner = resolve_member_config(model, owner, full_name, member_owner: members_owner, bottom_limit: owner, exact_match: true)
+                    method_conf, method_owner = resolve_member_config(model, owner, m, member_owner: members_owner, bottom_limit: owner, exact_match: true)
 
                     # if no override -- resolve in protocol itself
                     if !method_conf
-                        method_conf, method_owner = resolve_member_config(model, members_owner, full_name, member_owner: members_owner)
+                        method_conf, method_owner = resolve_member_config(model, members_owner, m, member_owner: members_owner)
                     end
                 elsif owner.is_a?(Bro::ObjCCategory)
                     conf = members_conf["methods"] || {}
@@ -5165,7 +5235,7 @@ ARGV[1..-1].each do |yaml_file|
                   method_conf = model.get_conf_for_key(full_name, conf)
                 else
                     # owner methods -- resolve using inherited
-                    method_conf, method_owner = resolve_member_config(model, owner, full_name, member_owner: members_owner, include_protocols: true)
+                    method_conf, method_owner = resolve_member_config(model, owner, m, member_owner: members_owner, include_protocols: true)
                 end
 
                 a = method_to_java(model, owner_name, owner, method_owner, m, method_conf || {}, seen, false, members_conf['class'], inherited_initializers)
@@ -5313,25 +5383,29 @@ ARGV[1..-1].each do |yaml_file|
         def is_method_in_super(model, cls, full_name)
             while cls.superclass do
                 cls = model.objc_classes.find { |e| e.name == cls.superclass }
-                (cls.instance_methods + cls.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
-                    return true if full_name == (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
-                end
+                conf = model.get_class_conf(cls.name) || {}
+                if conf['exclude'] != true
+                    (cls.instance_methods + cls.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
+                        return cls if full_name == m.full_name
+                    end
 
-                # check in super class categories
-                cat = model.objc_categories.find_all{ |c| c.owner == cls.name}.each do |c|
-                    (c.instance_methods + c.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
-                        return true if full_name == (m.is_a?(Bro::ObjCClassMethod) ? '+' : '-') + m.name
+                    # check in super class categories
+                    cat = model.objc_categories.find_all{ |c| c.owner == cls.name}.each do |c|
+                        (c.instance_methods + c.class_methods).find_all { |m| m.is_a?(Bro::ObjCMethod) && m.is_available? }.each do |m|
+                            return cls if full_name == m.full_name
+                        end
                     end
                 end
             end
-            return false
+            return nil
         end
 
         def is_method_in_protocol(model, cls, full_name)
             # get all protocols
             protocols = all_protocols(model, cls, {})
             found = protocols.find { |prot, protc| (protc["methods"] || {})[full_name] != nil }
-            found != nil
+            found[0] if found
+            nil
         end
 
         # dumping classes and protocols
@@ -5368,8 +5442,9 @@ ARGV[1..-1].each do |yaml_file|
                     bad_methods_new = []
                     bad_methods_inherited = []
                     bad_methods.each do |full_name, name|
-                        if is_method_in_super(model, cls, full_name) || is_method_in_protocol(model, cls, full_name)
-                            bad_methods_inherited.push([full_name, name])
+                        super_owner = is_method_in_super(model, cls, full_name) || is_method_in_protocol(model, cls, full_name)
+                        if super_owner
+                            bad_methods_inherited.push([full_name, name, super_owner.name])
                         else
                             bad_methods_new.push([full_name, name])
                         end
