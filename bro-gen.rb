@@ -4766,10 +4766,12 @@ ARGV[1..-1].each do |yaml_file|
         owner = nil
         if owner_cls
             owner_conf = model.get_class_conf(owner_cls.name)
-            if owner_conf && !owner_conf['exclude'] && !owner_conf['transitive'] && owner_cls.is_available? && !owner_cls.is_outdated?
-                owner = owner_conf['name'] || owner_cls.java_name
-                members[owner] = members[owner] || { owner: owner_cls, owner_name: owner, members: [], conf: owner_conf }
-                members[owner][:members].push([cat.instance_methods + cat.class_methods + cat.properties, owner_conf, owner_cls])
+            if owner_conf && !owner_conf['exclude'] && owner_cls.is_available? && !owner_cls.is_outdated?
+                if !owner_conf['transitive']
+                    owner = owner_conf['name'] || owner_cls.java_name
+                    members[owner] = members[owner] || { owner: owner_cls, owner_name: owner, members: [], conf: owner_conf }
+                    members[owner][:members].push([cat.instance_methods + cat.class_methods + cat.properties, owner_conf, owner_cls])
+                end
                 owner_cls.protocols = owner_cls.protocols + cat.protocols
                 owner_cls.instance_methods = owner_cls.instance_methods + cat.instance_methods
                 owner_cls.class_methods = owner_cls.class_methods + cat.class_methods
