@@ -430,6 +430,7 @@ module Bro
             super(source)
             @dep_message = []
             if source.start_with?('availability(')
+                source = source.split("\n").collect{|x| x.strip || x}.join("").gsub("\"\"", "")
                 source =~ /^availability\((.*)\)/
                 args = $1.split(/,(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)/).collect{|x| x.strip || x}
                 @platform = args[0]
