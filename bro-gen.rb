@@ -605,9 +605,10 @@ module Bro
                 when :cursor_obj_c_protocol_ref
                 when :cursor_binary_operator
                 when :cursor_paren_expr
-                when 427 #CXCursor_ObjCIndependentClass          = 427
+                when :cursor_obj_c_independent_class
+                    #CXCursor_ObjCIndependentClass          = 427
                     # ignored
-                when 441 # CXCursor_AlignedAttr = 441
+                when :cursor_aligned_attr # CXCursor_AlignedAttr = 441
                     # ignored as not able to support right now
                     # example typedef __attribute__((__ext_vector_type__(2),__aligned__(4))) float simd_packed_float2;
                 when :cursor_parm_decl
@@ -698,9 +699,9 @@ module Bro
                 case cursor.kind
                 when :cursor_unexposed_expr
                     # ignored
-                when 417
+                when :cursor_visibility_attr
                     # ignored CXCursor_VisibilityAttr = 417,
-                when 436
+                when :cursor_obj_c_boxable
                     # CXCursor_ObjCBoxable = 436
                     # ignored as no benefits of it
                     # typedef struct __attribute__((objc_boxable)) CGPoint CGPoint;
@@ -841,33 +842,36 @@ module Bro
             @variadic = cursor.variadic?
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
-                when :cursor_type_ref, :cursor_obj_c_class_ref, :cursor_obj_c_protocol_ref, :cursor_unexposed_expr, :cursor_ibaction_attr, 409, 410
+                when :cursor_type_ref, :cursor_obj_c_class_ref, :cursor_obj_c_protocol_ref, :cursor_unexposed_expr, :cursor_ibaction_attr, 409, 410, :cursor_pure_attr
                     # Ignored
-                when 434
+                when :cursor_const_attr
+                    # Ignored, TODO -- might be useful
+                when :cursor_obj_c_designated_initializer
                     # CXCursor_ObjCDesignatedInitializer = 434
                     # Ignored as not useful
                     # - (instancetype)init  __attribute__((objc_designated_initializer))
-                when 417
+                when :cursor_visibility_attr
                     # CXCursor_VisibilityAttr = 417,
                     # ignored as doesn't provide useful information 
                     # extern __attribute__((visibility("default"))) const char * _Nonnull sel_getName(SEL _Nonnull sel)
-                when 420
+                when :cursor_ns_returns_retained
                     # CXCursor_NSReturnsRetained = 420
+                    # TODO -- might be useful
                     # FIXME: use it to attach or add warning about no retain marshaller 
                     #  __attribute__((__ns_returns_retained__))
-                when 423
+                when :cursor_ns_consumes_self
                     # CXCursor_NSConsumesSelf = 423,
                     # ignored as doesn't provide useful information 
                     # - (nullable id)awakeAfterUsingCoder:(NSCoder *)coder __attribute__((ns_consumes_self)) __attribute__((ns_returns_retained));
-                when 429
+                when :cursor_obj_c_returns_inner_pointer
                     # CXCursor_ObjCReturnsInnerPointer = 429
                     # ignored for now, as no common way to adopt it 
                     # - (nullable const char *)cStringUsingEncoding:(NSStringEncoding)encoding __attribute__((objc_returns_inner_pointer));
-                when 430
+                when :cursor_obj_c_requires_super
                     # CXCursor_ObjCRequiresSuper = 430
                     # TODO: probably shell be added as JavaDoc that super call is requred (or annotation processor)
                     # - (void)updateConstraints __attribute__((availability(ios,introduced=6.0))) __attribute__((objc_requires_super));
-                when 440
+                when :cursor_warn_unused_result_attr
                     # TODO: CXCursor_WarnUnusedResultAttr = 440
                 when :cursor_parm_decl
                     @parameters.push FunctionParameter.new cursor, "p#{param_count}"
@@ -968,9 +972,9 @@ module Bro
                 case cursor.kind
                 when :cursor_type_ref, :cursor_parm_decl, :cursor_obj_c_class_ref, :cursor_obj_c_protocol_ref, :cursor_obj_c_instance_method_decl, :cursor_iboutlet_attr, :cursor_annotate_attr, :cursor_unexposed_expr
                     # Ignored
-                when 417
+                when :cursor_visibility_attr
                     # ignored CXCursor_VisibilityAttr = 417,
-                when 429
+                when :cursor_obj_c_returns_inner_pointer
                     # ignored CXCursor_ObjCReturnsInnerPointer = 429
                     # @property (readonly) const char *objCType __attribute__((objc_returns_inner_pointer));
                 when 426
@@ -1135,15 +1139,15 @@ module Bro
                 case cursor.kind
                 when :cursor_unexposed_expr, :cursor_struct, :cursor_union, :cursor_type_ref
                     # ignored
-                when 417
+                when :cursor_visibility_attr
                     # ignored CXCursor_VisibilityAttr = 417,
                     # ignored as doesn't provide useful information 
                     # extern __attribute__((visibility("default"))) @interface NSObject <NSObject> {
-                when 431
+                when :cursor_obj_c_root_class
                     # CXCursor_ObjCRootClass = 431
                     # ignored as doesn't provide useful information 
                     # __attribute__((objc_root_class))  @interface NSObject <NSObject> {
-                when 425
+                when :cursor_obj_c_exception
                     # ignored CXCursor_ObjCException = 425
                     # ignored as doesn't provide useful information 
                     # __attribute__((__objc_exception__)) @interface NSException : NSObject <NSCopying, NSSecureCoding>
@@ -1220,9 +1224,9 @@ module Bro
             @opaque = false
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
-                when :cursor_unexposed_expr, 417
+                when :cursor_unexposed_expr, :cursor_visibility_attr
                     # ignored
-                when 433 # NS_PROTOCOL_REQUIRES_EXPLICIT_IMPLEMENTATION
+                when :cursor_obj_c_explicit_protocol_impl
                     # ignored
                 when :cursor_obj_c_protocol_ref
                     @opaque = @name == cursor.spelling
@@ -1275,7 +1279,7 @@ module Bro
             @owner = nil
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
-                when :cursor_unexposed_expr, 417 # 417=CXCursor_VisibilityAttr
+                when :cursor_unexposed_expr, :cursor_visibility_attr
                     # ignored
                 when :cursor_obj_c_class_ref
                     @owner = cursor.spelling
@@ -1834,8 +1838,10 @@ module Bro
 
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
-                when :cursor_type_ref, :cursor_integer_literal, :cursor_asm_label_attr, :cursor_obj_c_class_ref, :cursor_obj_c_protocol_ref, :cursor_unexposed_expr, :cursor_struct, :cursor_init_list_expr, :cursor_c_style_cast_expr, :cursor_floating_literal, 417, :cursor_parm_decl
-                # Ignored
+                when :cursor_type_ref, :cursor_integer_literal, :cursor_asm_label_attr, :cursor_obj_c_class_ref, :cursor_obj_c_protocol_ref, :cursor_unexposed_expr, :cursor_struct, :cursor_init_list_expr, :cursor_c_style_cast_expr, :cursor_floating_literal, :cursor_visibility_attr, :cursor_parm_decl
+                    # Ignored
+                when :cursor_visibility_attr
+                    # TODO: ignored, might be useful
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
@@ -2007,9 +2013,9 @@ module Bro
                 case cursor.kind
                 when 409
                     # Ignored
-                when 417 
+                when :cursor_visibility_attr
                     # CXCursor_VisibilityAttr = 417 
-                when 437 
+                when :cursor_flag_enum
                     # CXCursor_FlagEnum = 437
                     # typedef enum __attribute__((flag_enum,enum_extensibility(open)))
                 when :cursor_enum_constant_decl
