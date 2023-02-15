@@ -705,8 +705,7 @@ module Bro
                     # CXCursor_ObjCBoxable = 436
                     # ignored as no benefits of it
                     # typedef struct __attribute__((objc_boxable)) CGPoint CGPoint;
-                when 441
-                    # CXCursor_AlignedAttr = 441
+                when :cursor_aligned_attr
                     a = Bro.read_attribute(cursor)
                     if a.start_with?('aligned(') && a.end_with?(')')
                         align = a.sub('aligned(', '')[0..-2]
@@ -736,8 +735,6 @@ module Bro
                             align = a.sub('aligned(', '')[0..-2]
                             align = eval(align).to_i
                             align_attr_value = align
-                        elsif a != '?'
-                            $stderr.puts "WARN: #{@union ? 'union' : 'struct'} #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute #{a}"
                         end
                     end
                 else
@@ -977,7 +974,7 @@ module Bro
                 when :cursor_obj_c_returns_inner_pointer
                     # ignored CXCursor_ObjCReturnsInnerPointer = 429
                     # @property (readonly) const char *objCType __attribute__((objc_returns_inner_pointer));
-                when 426
+                when :cursor_obj_c_ns_object
                     # ignored CXCursor_ObjCNSObject = 426
                     # @property (nonatomic, readonly, retain, nullable) __attribute__((NSObject)) CGColorRef backgroundColor;
                 when :cursor_unexposed_attr
@@ -1151,9 +1148,8 @@ module Bro
                     # ignored CXCursor_ObjCException = 425
                     # ignored as doesn't provide useful information 
                     # __attribute__((__objc_exception__)) @interface NSException : NSObject <NSCopying, NSSecureCoding>
-                when 432
-                    # CXCursor_ObjCSubclassingRestricted 
-                    # TODO: check if useful 
+                when :cursor_obj_c_subclassing_restricted
+                    # TODO: check if useful
                 when :cursor_obj_c_class_ref
                     @opaque = false if generic_fix
                     @opaque = @name == cursor.spelling unless generic_fix
@@ -3702,7 +3698,7 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '16'
+$ios_version = '16.2'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
@@ -3874,7 +3870,12 @@ ARGV[1..-1].each do |yaml_file|
     # now translate pre-processed
     translation_unit = index.parse_translation_unit(main_file, clang_args, [], detailed_preprocessing_record: true)
     translation_unit.diagnostics.each do |e|
-        $stderr.puts "#{e.severity} #{e.spelling}" if (e.severity == :error)
+         if (e.severity == :error)
+            $stderr.puts "Err: #{e.category} #{e.spelling} @ #{e.location.file} #{e.location.line}:#{e.location.column}"
+            e.children.each do |c|
+                $stderr.puts "    #{c.spelling}"
+            end
+         end
     end
 
     model = Bro::Model.new conf
