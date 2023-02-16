@@ -441,10 +441,12 @@ module Bro
                         @version = str_to_float(v.sub('introduced=', '').sub('_', '.'))
                     elsif v.start_with?('deprecated=')
                         @dep_version = str_to_float(v.sub('deprecated=', '').sub('_', '.'))
-                    elsif v.start_with?('message="') && v.end_with?('"')
-                        m = v.sub('message=', '')[0..-1]
-                        m = eval(m).strip
-                        @dep_message.push m unless m.empty?
+                    elsif v.start_with?('message=') && v.end_with?('"')
+                        m = v.sub('message=', '').strip
+                        if (m.start_with?('"') && m.end_with?('"'))
+                            m = eval(m).strip
+                            @dep_message.push m unless m.empty?
+                        end
                     elsif v.start_with?('replacement="') && v.end_with?('"')
                         m = v.sub('replacement=', '')[0..-1]
                         m = eval(m).strip
@@ -1822,8 +1824,9 @@ module Bro
             super(model, cursor)
             @type = cursor.type
 
-            @conf = model.get_typed_enum_conf(@type) 
-            if @conf
+            typed_enum_conf = model.get_typed_enum_conf(@type)
+            if typed_enum_conf && typed_enum_conf['transitive'] != true
+                @conf = typed_enum_conf
                 # picks configuration from typed_enum for global value as well to apply name transformation etc 
                 c = model.get_conf_for_key(@name, @conf)
                 @conf = @conf.merge(c) if c
@@ -2805,7 +2808,7 @@ module Bro
                     value = cursor.extent.text
                     # workaround if ends with L
                     value = value[0..-2] if value.end_with?('L')
-                when :cursor_unexposed_expr
+                when :cursor_unexposed_expr, :cursor_unary_expr
                     value = cursor.extent.text
                     value = value[1..-1] if value.start_with?('@"') && value.end_with?('"')
                 when :cursor_binary_operator
