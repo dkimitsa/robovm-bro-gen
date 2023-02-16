@@ -5140,40 +5140,38 @@ ARGV[1..-1].each do |yaml_file|
         # walk from owner till member_owner(bottom_limit) (exclusive)
         while cls != nil && cls != bottom_limit && cls_conf != nil
             members_conf = cls_conf[conf_key] || {}
-            if cls.containsMember?(member)
-                if cls == owner
-                    pmembers_conf = cls_conf[conf_key + "_private"] || {}
-                    members_conf = members_conf.merge(pmembers_conf)
-                end
-                conf = nil
-                if exact_match
-                    conf = members_conf[full_name]
-                    if conf == nil
-                        # no exact match, perform pattern match for global scope overrides
-                        conf = model.get_conf_for_key(full_name, members_conf)
-
-                        # ignore pattern match if it is scope is not implicitly set to global ( so all init* will not be applied if not forced to be global)
-                        # ignore scope rule in case config comes from member_owner (e.g. it config from method origin)
-                        if cls != member_owner && conf && conf["scope"] != "global"
-                            conf = nil
-                        end
-                    end
-                else
-                    # perform pattern match
+            if cls == owner
+                pmembers_conf = cls_conf[conf_key + "_private"] || {}
+                members_conf = members_conf.merge(pmembers_conf)
+            end
+            conf = nil
+            if exact_match
+                conf = members_conf[full_name]
+                if conf == nil
+                    # no exact match, perform pattern match for global scope overrides
                     conf = model.get_conf_for_key(full_name, members_conf)
 
-                    # special case to drop pattern match result:
-                    # drop all "exclude" pattern match if it is scope is not implicitly set to global (otherwise any {'-.*' : {"exclude": true}} config will drop all methods)
-                    # ignore scope rule in case config comes from member_owner or owner (e.g. it config from method origin)
-                    if cls != member_owner && cls != owner && conf && conf["exclude"] == true && conf["scope"] != "global"
+                    # ignore pattern match if it is scope is not implicitly set to global ( so all init* will not be applied if not forced to be global)
+                    # ignore scope rule in case config comes from member_owner (e.g. it config from method origin)
+                    if cls != member_owner && conf && conf["scope"] != "global"
                         conf = nil
                     end
                 end
+            else
+                # perform pattern match
+                conf = model.get_conf_for_key(full_name, members_conf)
 
-
-                return conf, cls if conf
-                return {"exclude" => true} if cls_conf["exclude"] == true
+                # special case to drop pattern match result:
+                # drop all "exclude" pattern match if it is scope is not implicitly set to global (otherwise any {'-.*' : {"exclude": true}} config will drop all methods)
+                # ignore scope rule in case config comes from member_owner or owner (e.g. it config from method origin)
+                if cls != member_owner && cls != owner && conf && conf["exclude"] == true && conf["scope"] != "global"
+                    conf = nil
+                end
             end
+
+
+            return conf, cls if conf
+            return {"exclude" => true} if cls_conf["exclude"] == true
 
             # switch to super
             super_cls = nil
