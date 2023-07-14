@@ -3184,7 +3184,12 @@ def is_method_like_init?(owner, method)
         (method.return_type.spelling == 'id' ||
          method.return_type.spelling =~ /instancetype/ ||
          method.return_type.spelling =~ /kindof\s+#{Regexp.escape(owner.name)}\s*\*/ ||
-         method.return_type.spelling == "#{owner.name} *")
+         method.return_type.spelling == "#{owner.name} *" ||
+         (
+            # generic
+            owner.is_a?(Bro::ObjCClass) && method.return_type.spelling == "#{owner.name}" +
+              "<" + owner.template_params.map{|e| e.name}.join(", ") + "> *"
+         ))
 end
 
 def get_generic_type(model, owner, method, type, index, conf_type, name = nil)
@@ -3616,7 +3621,7 @@ def clang_preprocess(headers, args)
     headers_h = File.join(tmp_dir, '__headers.h')
     File.open(headers_h, 'w') do |f|
         headers.each do |header|
-            if (header.start_with?("#"))
+            if (header.start_with?("#") || header.start_with?("@"))
                 f.puts header
             else
                 f.puts "#include \"#{header}\""
@@ -3827,7 +3832,6 @@ ARGV[1..-1].each do |yaml_file|
                end
 
     imports.uniq!
-    imports_s = "\n" + imports.map { |im| "import #{im};" }.join("\n") + "\n"
 
     index = FFI::Clang::Index.new
     clang_preprocess_args = ['-E', '-dD', '-target', "arm64-apple-ios#{$ios_version}", '-fblocks', '-isysroot', sysroot]
@@ -3835,7 +3839,7 @@ ARGV[1..-1].each do |yaml_file|
 
     clang_headers = []
     headers.each do |e|
-        if (e.start_with?("#"))
+        if (e.start_with?("#") || e.start_with?("@"))
             # push as it is without extending the path
             clang_headers.push(e)
         else
@@ -4129,7 +4133,7 @@ ARGV[1..-1].each do |yaml_file|
 
             data['values'] = "\n    #{values}\n    "
             data['annotations'] = (data['annotations'] || []).push("@Marshaler(#{marshaler}.class)") if marshaler
-            data['imports'] = imports_s
+            data['imports'] = (data['imports'] || [].concat(imports))
             availability_annotations = []
             data['javadoc'] = "\n" + model.push_availability(enum, annotation_lines: availability_annotations).join("\n") + "\n"
             data['annotations'] = (data['annotations'] || []).concat(availability_annotations) if !availability_annotations.empty?
@@ -4230,7 +4234,7 @@ ARGV[1..-1].each do |yaml_file|
         methods_s += "\n    }" unless last_static_class.nil?
 
         data['methods'] = (data['methods'] || '') + "\n    #{methods_s}\n    "
-        data['imports'] = imports_s
+        data['imports'] = (data['imports'] || [].concat(imports))
         data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})")
         data['bind'] = "static { Bro.bind(#{owner}.class); }"
         template_datas[owner] = data
@@ -4374,7 +4378,7 @@ ARGV[1..-1].each do |yaml_file|
         data['values'] = "\n    #{values_s}\n        "
         data['constants'] = "\n    #{constants_s}\n    "
         data['extends'] = e.extends || "GlobalValueEnumeration<#{java_type_no_anno}>"
-        data['imports'] = imports_s
+        data['imports'] = (data['imports'] || [].concat(imports))
         data['value_list'] = value_list_s
         data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})").push('@StronglyLinked')
 
@@ -4387,7 +4391,7 @@ ARGV[1..-1].each do |yaml_file|
         data = template_datas[name] || {}
         d.generate_template_data(data)
 
-        data['imports'] = imports_s
+        data['imports'] = (data['imports'] || [].concat(imports))
         data['template'] = def_value_dictionary_template
 
         template_datas[name] = data
@@ -4578,7 +4582,7 @@ ARGV[1..-1].each do |yaml_file|
         constructors_s = constructors_lines.flatten.join("\n    ")
         data['methods'] = (data['methods'] || '') + "\n    #{methods_s}\n    "
         data['constructors'] = (data['constructors'] || '') + "\n    #{constructors_s}\n    " unless constructors_s.empty?
-        data['imports'] = imports_s
+        data['imports'] = (data['imports'] || [].concat(imports))
         data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})")
         data['bind'] = "static { Bro.bind(#{owner}.class); }"
         template_datas[owner] = data
@@ -4654,7 +4658,7 @@ ARGV[1..-1].each do |yaml_file|
         constants_s += "\n    }" unless last_static_class.nil?
 
         data['constants'] = (data['constants'] || '') + "\n    #{constants_s}\n    "
-        data['imports'] = imports_s
+        data['imports'] = (data['imports'] || [].concat(imports))
         template_datas[owner] = data
     end
 
@@ -4864,7 +4868,7 @@ ARGV[1..-1].each do |yaml_file|
     end
 
     # same as [prot.instance_methods + prot.class_methods + prot.properties, protc, prot]
-    # but don't adds excluded mehtods
+    # but don't adds excluded methods
     def all_not_excluded(cls, prot, protc)
         methods_conf = protc['methods'] || {}
         props_conf = protc['properties'] || {}
@@ -4999,7 +5003,8 @@ ARGV[1..-1].each do |yaml_file|
                 end
             end
         end
-        data['imports'] = imports_s
+        data['imports'] = (data['imports'] || [].concat(imports))
+        data['imports'] = data['imports'].concat(c['imports']) if c['imports']
         data['implements'] = protocol_list_s(model, 'implements', cls.protocols, c)
         data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})").push("@NativeClass#{runtime_name}")
         data['bind'] = "static { ObjCRuntime.bind(#{name}.class); }"
@@ -5029,7 +5034,8 @@ ARGV[1..-1].each do |yaml_file|
             data['implements'] = protocol_list_s(model, 'extends', prot.protocols, c) || 'extends NSObjectProtocol'
             data['template'] = def_protocol_template
         end
-        data['imports'] = imports_s
+        data['imports'] = (data['imports'] || [].concat(imports))
+        data['imports'] = data['imports'].concat(c['imports']) if c['imports']
         availability_annotations = []
         data['javadoc'] = "\n" + model.push_availability(prot, annotation_lines: availability_annotations).join("\n") + "\n"
         data['annotations'] = (data['annotations'] || []).concat(availability_annotations) if !availability_annotations.empty?
@@ -5171,7 +5177,7 @@ ARGV[1..-1].each do |yaml_file|
 
 
             return conf, cls if conf
-            return {"exclude" => true} if cls_conf["exclude"] == true
+            return {"exclude" => true} if cls_conf["exclude"] == true && cls == member_owner
 
             # switch to super
             super_cls = nil
@@ -5303,7 +5309,7 @@ ARGV[1..-1].each do |yaml_file|
 
     template_datas.each do |owner, data|
         c = model.get_class_conf(owner) || model.get_protocol_conf(owner) || model.get_category_conf(owner) || model.get_enum_conf(owner) || {}
-        data['imports'] = imports_s
+        data['imports'] = "\n" + (data['imports'] || [].concat(imports)).uniq().map { |im| "import #{im};" }.join("\n") + "\n"
         data['visibility'] = data['visibility'] || c['visibility'] || 'public'
         data['extends'] = data['extends'] || c['extends'] || 'CocoaUtility'
 
