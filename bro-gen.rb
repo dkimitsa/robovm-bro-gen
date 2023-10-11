@@ -3629,7 +3629,7 @@ def clang_preprocess(headers, args)
         end
     end
 
-    lines = IO.popen(['clang', headers_h, '-include', overrides_h] + args).readlines
+    lines = IO.popen(['clang'] + args + [headers_h, '-include', overrides_h]).readlines
     lines.each do |line|
         if !line.start_with?('# ')
             # data line
@@ -3853,7 +3853,6 @@ ARGV[1..-1].each do |yaml_file|
 
     clang_preprocess_args += conf['clang_args'] if conf['clang_args']
     clang_args += conf['clang_args'] if conf['clang_args']
-    clang_preprocess_args.push "-ObjC" if clang_preprocess_args.include?('objective-c')
 
     # preprocess files using clang to expand all macro to be able better understand
     # attributes and enum/types definitions
