@@ -684,6 +684,7 @@ module Bro
             super(model, cursor)
             @name = @name.gsub(/\s*\bconst\b\s*/, '')
             @name = @name.sub(/^(struct|union)\s*/, '')
+            @name = "" if @name.start_with?('(unnamed at') || @name.start_with?('(anonymous at')
 
             @type = cursor.type
             @parent = parent
@@ -972,6 +973,7 @@ module Bro
                 when :cursor_type_ref, :cursor_parm_decl, :cursor_obj_c_class_ref, :cursor_obj_c_protocol_ref, :cursor_obj_c_instance_method_decl, :cursor_iboutlet_attr, :cursor_annotate_attr, :cursor_unexposed_expr
                     # Ignored
                 when :cursor_visibility_attr
+                when :cursor_obj_c_class_method_decl
                     # ignored CXCursor_VisibilityAttr = 417,
                 when :cursor_obj_c_returns_inner_pointer
                     # ignored CXCursor_ObjCReturnsInnerPointer = 429
@@ -1863,11 +1865,17 @@ module Bro
             else
                 # find out const status, check typedefs 
                 t = @type
-                if @type.kind == :type_typedef
+                if t.kind == 119 && t.declaration.kind == :cursor_typedef_decl
+                    td_name = t.declaration.spelling
+                    td = @model.typedefs.find { |e| e.name == td_name }
+                    t = td.typedef_type if td
+                end
+                while t.kind == :type_typedef && !t.const?
                     td_name = type.spelling
                     td_name = td_name.gsub(/__strong\s*/, '')
                     td = @model.typedefs.find { |e| e.name == td_name }
-                    t = td.typedef_type if td
+                    break unless td
+                    t = td.typedef_type
                 end
                 @const = t.spelling.match(/\bconst\b/) != nil
                 if @const == false
@@ -2209,8 +2217,10 @@ module Bro
         end
 
         def build_type_cache_name(owner, type, generic)
-            if owner && type.kind == :type_typedef && !@typedefs.find { |e| e.name == type.spelling } && type.declaration.kind == :cursor_template_type_parameter
+            if owner && type.kind == :type_typedef && type.declaration.kind == :cursor_template_type_parameter && !@typedefs.find { |e| e.name == type.spelling }
                 return owner.name + "." + type.spelling
+            elsif owner && type.kind == 119 && type.declaration.kind == :cursor_template_type_parameter && !@typedefs.find { |e| e.name == type.declaration.spelling }
+                return owner.name + "." + type.declaration.spelling
             elsif owner && type.spelling.include?("<")
                 owner.name + "." + type.spelling
             elsif generic
@@ -2225,9 +2235,10 @@ module Bro
         # type matching by name (for example when typedef name matches enum generated from anonymous one)
         def resolve_typedef(type)
             name = type.spelling
-            if @conf_typedefs[name]
+            if @conf_typedefs[name] || @conf_classes[name] # if we have configuration override
                 return resolve_type_by_name name
-            elsif type.kind == :type_typedef
+            elsif type.kind == :type_typedef || type.kind == 119 # CXType_Elaborated
+                name = type.declaration.spelling if type.kind == 119 # CXType_Elaborated
                 td = @typedefs.find { |e| e.name == name }
                 if td
                     return resolve_typedef(td.typedef_type)
@@ -2338,17 +2349,33 @@ module Bro
                 Typedef.new self, nil, @conf_structdefs[name]
             elsif type.kind == :type_obj_c_id
                 resolve_type_by_name "NSObject"
+            elsif type.kind == :type_function_proto
+                Bro.builtins_by_name('FunctionPtr')
             elsif type.kind == :type_pointer
+                e = nil
                 if type.pointee.kind == :type_unexposed && name.match(/\(\*\)/)
                     # Callback. libclang does not expose info for callbacks.
-                    Bro.builtins_by_name('FunctionPtr')
+                    e = Bro.builtins_by_name('FunctionPtr')
                 elsif type.pointee.kind == :type_function_proto
-                    Bro.builtins_by_name('FunctionPtr')
+                    e = Bro.builtins_by_name('FunctionPtr')
                 elsif type.pointee.kind == :type_typedef && type.pointee.declaration.typedef_type.kind == :type_function_proto
-                    Bro.builtins_by_name('FunctionPtr')
+                    e = Bro.builtins_by_name('FunctionPtr')
                 elsif type.pointee.kind == :type_typedef && type.pointee.declaration.kind == :cursor_template_type_parameter
-                    # pointer to tempalte param, return as template type itself. E.g. '-(T*) foo'
+                    # pointer to template param, return as template type itself. E.g. '-(T*) foo'
                     e = resolve_type(owner, type.pointee)
+                elsif type.pointee.kind == 119
+                    if type.pointee.declaration.kind == :cursor_typedef_decl
+                        td = @typedefs.find { |e| e.name == type.pointee.declaration.spelling }
+                        if td
+                            if td.typedef_type.kind == :cursor_template_type_parameter
+                                e = td
+                            elsif td.typedef_type.kind == :type_function_proto
+                                e = Bro.builtins_by_name('FunctionPtr')
+                            end
+                        end
+                    end
+                end
+                if e
                     e
                 else
                     e = resolve_type(owner, type.pointee)
@@ -2390,6 +2417,10 @@ module Bro
                 if type.pointee.kind == :type_typedef
                     # look up for case typedef NSObject MYObject;
                     td = @typedefs.find { |e| e.name == name }
+                    name = td.typedef_type.spelling if td
+                elsif type.pointee.kind == 119 && type.pointee.declaration.kind == :cursor_typedef_decl
+                    # look up for case typedef NSObject MYObject;
+                    td = @typedefs.find { |e| e.name == type.pointee.spelling }
                     name = td.typedef_type.spelling if td
                 end
                 name = name.gsub(/__kindof\s*/, '')
@@ -2567,30 +2598,39 @@ module Bro
                 end
             elsif type.kind == 119 # CXType_Elaborated
                 e = nil
-                name = type.spelling
-                name = name.gsub(/\s*\bconst\b\s*/, '')
+                name = type.declaration.spelling
 
-                if name.start_with?('struct ') || name.start_with?('union ')
-                    if name.start_with?('struct ')
-                        name = name.sub('struct ', '')
-                    else
-                        name = name.sub('union ', '')
-                    end
-                    e = resolve_type_by_name name
-                    # in case of anonymous we have to find using id
-                    if e.nil?
-                        eid = Bro::location_to_id(type.declaration.location)
-                        e = @structs.find { |e| e.id == eid}
-                    end
-                elsif name.start_with?('enum ')
-                    name = name.sub('enum ', '')
+                if type.declaration.kind == :cursor_struct || type.declaration.kind == :cursor_union
+                    eid = Bro::location_to_id(type.declaration.location)
+                    e = @structs.find { |e| e.name == name || e.id == eid}
+                elsif type.declaration.kind == :cursor_enum_decl
+                    name = type.declaration.spelling
                     eid = Bro::location_to_id(type.declaration.location)
                     e = @enums.find { |e| e.name == name || e.id == eid}
-                else
+                elsif type.declaration.kind == :cursor_template_type_parameter
+                    # Find template parameter in objc class
+                    if owner && (owner.is_a?(Bro::ObjCClass) || owner.is_a?(Bro::ObjCCategory))
+                        e = owner.template_params.find { |e| e.name == name }
+                    end
+                elsif type.declaration.kind == :cursor_typedef_decl
+                    td = @typedefs.find { |e| e.name == name }
+                    if td
+                        if td.typedef_type.kind == :type_block_pointer
+                            e = resolve_type(owner, td.typedef_type)
+                        elsif td.is_callback? || td.is_struct?
+                            e = td
+                        elsif get_class_conf(td.name)
+                            e = td
+                        else
+                            e = @enums.find { |e| e.name == name || e.id == td.id}
+                            e = e || resolve_type(owner, td.typedef_type)
+                        end
+                    end
+                end
+                if !e
+                    $stderr.puts "WARN: Unknown elaborated type #{name}"
                     if name.start_with?('class ')
                         name = name.sub('class ', '')
-                    else
-                        $stderr.puts "WARN: Unknown elaborated type #{name}"
                     end
                     e = resolve_type_by_name name
                 end
@@ -3706,7 +3746,7 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '16.2'
+$ios_version = '17'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
@@ -4198,7 +4238,6 @@ ARGV[1..-1].each do |yaml_file|
             lines = []
             java_name = v.java_name()
             java_type = vconf['type'] || model.to_java_type(model.resolve_type(nil, v.type, true))
-            marshaler = vconf['marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{vconf['marshaler']}.class) " : ''
             visibility = vconf['visibility'] || 'public'
             marshaler = vconf['marshaler'] ? "@org.robovm.rt.bro.annotation.Marshaler(#{vconf['marshaler']}.class) " : ''
 
