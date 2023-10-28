@@ -3290,7 +3290,7 @@ def property_to_java(model, owner, prop, props_conf, seen, adapter = false)
         param_types = []
         if owner.is_a?(Bro::ObjCCategory)
             cconf = model.get_category_conf(owner.owner.nil? ? owner.name : owner.owner)
-            thiz_type = cconf && cconf['owner_type'] || owner.owner || owner.name
+            thiz_type = conf['owner_type'] || cconf && cconf['owner_type'] || owner.owner || owner.name
             param_types.unshift([thiz_type, nil, 'thiz'])
         end
         parameters_s = param_types.map { |p| "#{p[0]} #{p[2]}" }.join(', ')
@@ -3426,7 +3426,7 @@ def method_to_java(model, owner_name, owner, method_owner, method, conf, seen, a
         if owner.is_a?(Bro::ObjCCategory)
             if method.is_a?(Bro::ObjCInstanceMethod)
                 cconf = model.get_category_conf(owner.owner)
-                thiz_type = cconf && cconf['owner_type'] || owner.owner
+                thiz_type = conf['owner_type'] || cconf && cconf['owner_type'] || owner.owner
                 param_types.unshift([thiz_type, nil, 'thiz'])
             end
         end
