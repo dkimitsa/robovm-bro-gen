@@ -649,6 +649,9 @@ module Bro
                 # enum without name, attach name to it as well as visibility attributes 
                 @enum.name = @name
                 @enum.attributes += @attributes
+            elsif @enum != nil && @enum.name == @name
+                # copy attributes from typedef to enum
+                @enum.attributes += @attributes
             end
         end
 
@@ -1625,7 +1628,8 @@ module Bro
                          else
                              "return #{resolved_type.name}.valueOf(val.longValue());"
                          end
-                elsif resolved_type.is_a?(Struct) && !resolved_type.is_opaque? || type_hint == 'Struct'
+                # ignore CMTime as its now being detected as Struct
+                elsif resolved_type.is_a?(Struct) && type != 'CMTime' && !resolved_type.is_opaque? || type_hint == 'Struct'
                     s << "NSData val = get(#{key_accessor}, NSData.class);"
                     s << "return val.getStructData(#{type}.class);"
                 else
@@ -1741,7 +1745,8 @@ module Bro
                     s = "#{param_name}.getDictionary()"
                 elsif resolved_type.is_a?(Enum)
                     s = "CFNumber.valueOf(#{param_name}.value())"
-                elsif resolved_type.is_a?(Struct) && !resolved_type.is_opaque?
+                # ignore CMTime as its now being detected as Struct
+                elsif resolved_type.is_a?(Struct) && type != 'CMTime' && !resolved_type.is_opaque?
                     s = "new NSData(#{param_name})"
                 else
                     case type
