@@ -323,7 +323,7 @@ module Bro
 
         def to_java_name(type)
             if type.respond_to?('each') # Generic type
-                "#{type[0].java_name}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
+                @model.to_java_generic_type(type)
             elsif type.is_a?(Block)
                 type.java_name_ex()[1]
             else
@@ -1270,6 +1270,10 @@ module Bro
 
         def java_name
             name ? ((@model.get_protocol_conf(name) || {})['name'] || name) : ''
+        end
+
+        def is_class?
+            name ? ((@model.get_protocol_conf(name) || {})['class'] || false) : false
         end
     end
 
@@ -2267,6 +2271,8 @@ module Bro
             generics = generic_name.split(',')
             generic_types = []
             generics.each do |g|
+                # special workaround for protocol extension to NSString, drop this
+                g = 'NSString' if g.start_with?('NSString<') && g.end_with?('>')
                 gtype = template_params.find {|n| n.name == g}
                 if (gtype)
                     # its template param of this class 
@@ -2302,7 +2308,7 @@ module Bro
                     # expand value enum/dictionary to container class (as these are not subclass of NSObject and will fail to compile on containers)
                     gtype = resolve_type_by_name(gtype.java_type) if gtype.is_a?(GlobalValueEnumeration) 
                     gtype = resolve_type_by_name(gtype.java_type) if gtype.is_a?(GlobalValueDictionaryWrapper) && !allow_dict_wrapper
-                    valid_generics = gtype.is_a?(ObjCClass) || gtype.is_a?(Typedef) || gtype.is_a?(Builtin) || (allow_dict_wrapper && gtype.is_a?(GlobalValueDictionaryWrapper))
+                    valid_generics = gtype.is_a?(ObjCClass) || gtype.is_a?(ObjCProtocol) || gtype.is_a?(Typedef) || gtype.is_a?(Builtin) || (allow_dict_wrapper && gtype.is_a?(GlobalValueDictionaryWrapper))
                     break unless valid_generics
                     generic_types.push(gtype)
                 end
@@ -2727,13 +2733,36 @@ module Bro
             type.is_a?(Struct) || type.is_a?(Typedef) && (type.is_struct? || type.typedef_type.kind == :type_record)
         end
 
+        def to_java_generic_type(type)
+            notAcceptingProto = [
+                "NSArray", "NSMutableArray", "NSSet", "NSMutableSet", "NSOrderedSet", "NSDictionary",
+                "NSMutableDictionary", "NSEnumerator"
+            ]
+            ownerName = type[0].java_name
+
+            # do not declare protocol extension as generic -- check if there are template_params in owner
+            template_params = nil
+            template_params = type[0].template_params if (type[0].is_a?(Bro::ObjCClass))
+            if template_params == nil || template_params.length == 0
+                ownerName
+            elsif notAcceptingProto.include?(ownerName)
+                # protocols are not allowed in NS containers yet
+                "#{ownerName}<" + type[1..-1].map{ |e|
+                    e.is_a?(ObjCProtocol) && !e.is_class? ? '?' : e.java_name
+                }.join(", ") + ">"
+            else
+                # generic
+                "#{ownerName}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
+            end
+        end
+
         def to_java_type(type)
             if is_byval_type?(type)
                 "@ByVal #{type.java_name}"
             elsif type.is_a?(Array)
                 "@Array({#{type.dimensions.join(', ')}}) #{type.java_name}"
             elsif type.respond_to?('each') # Generic type
-                "#{type[0].java_name}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
+                to_java_generic_type(type)
             else
                 type.java_name
             end
@@ -2742,7 +2771,7 @@ module Bro
         def to_wrapper_java_type(type)
         	# same as above but used for wrapper parameter definition thues not requires Bro annotation
             if type.respond_to?('each') # Generic type
-                "#{type[0].java_name}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
+                to_java_generic_type(type)
             else
                 type.java_name
             end
