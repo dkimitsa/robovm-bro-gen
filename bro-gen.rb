@@ -2021,6 +2021,7 @@ module Bro
         attr_accessor :values, :type, :enum_type
         def initialize(model, cursor)
             super(model, cursor)
+            @name = "" if @name.start_with?('enum (unnamed at')
             @values = []
             @type = cursor.type
             @enum_type = cursor.enum_type
@@ -2427,7 +2428,7 @@ module Bro
                 # then check for classes 
                 e ||= @objc_classes.find { |e| e.name == name }
                 e
-            elsif type.kind == :type_obj_c_object_pointer || type.kind == 161 # CXType_ObjCObject = 161 # consider point to obj and objc object same 
+            elsif type.kind == :type_obj_c_object_pointer || type.kind == 161 # CXType_ObjCObject = 161 # consider point to obj and objc object same
                 name = type.pointee.spelling
                 if type.pointee.kind == :type_typedef
                     # look up for case typedef NSObject MYObject;
