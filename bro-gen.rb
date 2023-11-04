@@ -2194,6 +2194,10 @@ module Bro
             b != nil && b
         end
 
+        def default_config(name)
+            @conf["default_#{name}_config"]
+        end
+
         def inspect
             object_id
         end
@@ -5326,6 +5330,9 @@ ARGV[1..-1].each do |yaml_file|
                     # owner methods -- resolve using inherited
                     method_conf, method_owner = resolve_member_config(model, owner, m, member_owner: members_owner, include_protocols: true)
                 end
+
+                # apply default methods configuration (global for all classes)
+                method_conf ||= model.get_conf_for_key(full_name, model.default_config("methods") || {})
 
                 a = method_to_java(model, owner_name, owner, method_owner, m, method_conf || {}, seen, false, members_conf['class'], inherited_initializers)
                 methods_lines.concat(a[0])
