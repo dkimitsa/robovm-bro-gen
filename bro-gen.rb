@@ -100,7 +100,6 @@ module Bro
     end
 
     class Entity
-        @@deprecated_version = 6
 
         attr_accessor :id, :location, :name, :framework, :attributes, :cursor
         def initialize(model, cursor)
@@ -152,7 +151,7 @@ module Bro
         def is_outdated?
             if deprecated
                 d_version = deprecated
-                (d_version > 0 && d_version <= @@deprecated_version) || (d_version < 0 && @model.exclude_deprecated?)
+                (d_version > 0 && d_version <= @model.min_usable_version) || (d_version < 0 && @model.exclude_deprecated?)
             else
                 false
             end
@@ -2195,6 +2194,10 @@ module Bro
             b != nil && b
         end
 
+        def min_usable_version
+            (@conf["min_usable_version"] || $ios_version_min_usable).to_f
+        end
+
         def default_config(name)
             @conf["default_#{name}_config"]
         end
@@ -3786,7 +3789,7 @@ LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
 $ios_version = '17'
-$ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be supressed if ver <= 8.0
+$ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be suppressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
 sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
