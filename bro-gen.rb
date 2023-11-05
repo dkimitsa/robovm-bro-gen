@@ -4854,8 +4854,11 @@ ARGV[1..-1].each do |yaml_file|
 
     unassigned_categories = []
     model.objc_categories.each do |cat|
-        c = model.get_category_conf("#{cat.name}@#{cat.owner}")
-        c = model.get_category_conf(cat.name) unless c
+        # skip category if exactly specified
+        exact_c = c = model.get_category_conf("#{cat.name}@#{cat.owner}")
+        next if exact_c && exact_c['exclude'] == true
+
+        c = exact_c || model.get_category_conf(cat.name)
         owner_name = c && c['owner'] || cat.owner
         owner_cls = model.objc_classes.find { |e| e.name == owner_name }
         owner = nil
@@ -4883,7 +4886,7 @@ ARGV[1..-1].each do |yaml_file|
             owner = c['name'] || cat.java_name
             members[owner] = members[owner] || { owner: cat, owner_name: owner, members: [], conf: c }
             members[owner][:members].push([cat.instance_methods + cat.class_methods + cat.properties, c, cat])
-        else
+        elsif !c || (!c['exclude'] && !c['transitive'])
             $stderr.puts "WARN: Skipping category #{cat.name} for #{cat.owner}"
         end
     end
