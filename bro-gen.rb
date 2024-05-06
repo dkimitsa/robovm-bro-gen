@@ -597,7 +597,7 @@ module Bro
             end
 
             @is_structDef = false
-            @typedef_type = cursor.typedef_type
+            @typedef_type = cursor.underlying_type
             enum_without_name = false
             cursor.visit_children do |cursor, _parent|
                 case cursor.kind
@@ -1066,7 +1066,7 @@ module Bro
         def initialize(model, cursor, owner)
             super(model, cursor)
             @owner = owner
-            @typedef_type = cursor.typedef_type
+            @typedef_type = cursor.underlying_type
         end
 
         def java_name
@@ -1873,7 +1873,7 @@ module Bro
             else
                 # find out const status, check typedefs 
                 t = @type
-                if t.kind == 119 && t.declaration.kind == :cursor_typedef_decl
+                if t.kind == :type_elaborated && t.declaration.kind == :cursor_typedef_decl
                     td_name = t.declaration.spelling
                     td = @model.typedefs.find { |e| e.name == td_name }
                     t = td.typedef_type if td
@@ -2236,7 +2236,7 @@ module Bro
         def build_type_cache_name(owner, type, generic)
             if owner && type.kind == :type_typedef && type.declaration.kind == :cursor_template_type_parameter && !@typedefs.find { |e| e.name == type.spelling }
                 return owner.name + "." + type.spelling
-            elsif owner && type.kind == 119 && type.declaration.kind == :cursor_template_type_parameter && !@typedefs.find { |e| e.name == type.declaration.spelling }
+            elsif owner && type.kind == :type_elaborated && type.declaration.kind == :cursor_template_type_parameter && !@typedefs.find { |e| e.name == type.declaration.spelling }
                 return owner.name + "." + type.declaration.spelling
             elsif owner && type.spelling.include?("<")
                 owner.name + "." + type.spelling
@@ -2254,8 +2254,8 @@ module Bro
             name = type.spelling
             if @conf_typedefs[name] || @conf_classes[name] # if we have configuration override
                 return resolve_type_by_name name
-            elsif type.kind == :type_typedef || type.kind == 119 # CXType_Elaborated
-                name = type.declaration.spelling if type.kind == 119 # CXType_Elaborated
+            elsif type.kind == :type_typedef || type.kind == :type_elaborated # CXType_Elaborated
+                name = type.declaration.spelling if type.kind == :type_elaborated # CXType_Elaborated
                 td = @typedefs.find { |e| e.name == name }
                 if td
                     return resolve_typedef(td.typedef_type)
@@ -2377,12 +2377,14 @@ module Bro
                     e = Bro.builtins_by_name('FunctionPtr')
                 elsif type.pointee.kind == :type_function_proto
                     e = Bro.builtins_by_name('FunctionPtr')
-                elsif type.pointee.kind == :type_typedef && type.pointee.declaration.typedef_type.kind == :type_function_proto
+                elsif type.pointee.kind == :type_typedef && type.pointee.declaration.underlying_type.kind == :type_function_proto
                     e = Bro.builtins_by_name('FunctionPtr')
                 elsif type.pointee.kind == :type_typedef && type.pointee.declaration.kind == :cursor_template_type_parameter
                     # pointer to template param, return as template type itself. E.g. '-(T*) foo'
                     e = resolve_type(owner, type.pointee)
-                elsif type.pointee.kind == 119
+                elsif type.pointee.kind == :type_typedef && type.pointee.declaration.kind == :type_obj_c_interface
+                    e = resolve_type(owner, type.pointee)
+                elsif type.pointee.kind == :type_elaborated
                     if type.pointee.declaration.kind == :cursor_typedef_decl
                         td = @typedefs.find { |e| e.name == type.pointee.declaration.spelling }
                         if td
@@ -2437,7 +2439,7 @@ module Bro
                     # look up for case typedef NSObject MYObject;
                     td = @typedefs.find { |e| e.name == name }
                     name = td.typedef_type.spelling if td
-                elsif type.pointee.kind == 119 && type.pointee.declaration.kind == :cursor_typedef_decl
+                elsif type.pointee.kind == :type_elaborated && type.pointee.declaration.kind == :cursor_typedef_decl
                     # look up for case typedef NSObject MYObject;
                     td = @typedefs.find { |e| e.name == type.pointee.spelling }
                     name = td.typedef_type.spelling if td
@@ -2508,6 +2510,7 @@ module Bro
                 name = name.gsub(/\[\]/, '*')
                 # remove all _Nullable
                 name = name.gsub(/[\s]*_Nullable[\s]*/, '')
+                name = name.gsub(/[\s]*_Nonnull[\s]*/, '')
                 name = name.sub(/^(id|NSObject)(<.*>)?\s*/, 'NSObject *')
                 base = name.sub(/^(.*?)[\s]*[*]+/, '\1')
                 e = case base
@@ -2615,7 +2618,7 @@ module Bro
                     $stderr.puts "WARN: Unknown block type #{name}. Using ObjCBlock. Failed to convert due: #{e}"
                     Bro.builtins_by_type_kind(type.kind)
                 end
-            elsif type.kind == 119 # CXType_Elaborated
+            elsif type.kind == :type_elaborated # CXType_Elaborated
                 e = nil
                 name = type.declaration.spelling
 
@@ -3104,7 +3107,7 @@ end
 
 def dump_ast(cursor, indent="")
     cursor.visit_children do |cursor, _parent|
-        puts "#{indent}#{cursor.kind} '#{cursor.spelling}' #{cursor.type.kind} '#{cursor.type.spelling}' #{cursor.typedef_type ? cursor.typedef_type.kind : ''}"
+        puts "#{indent}#{cursor.kind} '#{cursor.spelling}' #{cursor.type.kind} '#{cursor.type.spelling}' #{cursor.underlying_type ? cursor.underlying_type.kind : ''}"
         dump_ast cursor, "#{indent}    "
         next :continue
     end
@@ -3956,7 +3959,7 @@ ARGV[1..-1].each do |yaml_file|
     # END of potential support code block
 
     # now translate pre-processed
-    translation_unit = index.parse_translation_unit(main_file, clang_args, [], detailed_preprocessing_record: true)
+    translation_unit = index.parse_translation_unit(main_file, clang_args, [], [:detailed_preprocessing_record])
     translation_unit.diagnostics.each do |e|
          if (e.severity == :error)
             $stderr.puts "Err: #{e.category} #{e.spelling} @ #{e.location.file} #{e.location.line}:#{e.location.column}"
@@ -4828,7 +4831,7 @@ ARGV[1..-1].each do |yaml_file|
     members = {}
     (model.objc_classes + model.objc_protocols).each do |cls|
         c = cls.is_a?(Bro::ObjCClass) ? model.get_class_conf(cls.name) : model.get_protocol_conf(cls.name)
-        # before skipping check if this is potentialy missing class or protocol from yaml file
+        # before skipping check if this is potentially missing class or protocol from yaml file
         add_potential_new_entry(cls, nil) if !c && cls.is_available? && !cls.is_opaque? && !cls.is_outdated? && model.is_included?(cls)
 
         next unless c && !c['exclude'] && !c['transitive'] && cls.is_available? && !cls.is_outdated?
@@ -4843,7 +4846,7 @@ ARGV[1..-1].each do |yaml_file|
         next unless c && !c['exclude'] && !c['transitive'] && cls.is_available? && !cls.is_outdated?
         owner = c['name'] || cls.java_name
 
-        # add inits from inherited classses
+        # add inits from inherited classes
         # otherwise class will lack possible constructors
         inheriter_inits = inherited_initializers(model, cls, c)
         members[owner][:members] += inheriter_inits
