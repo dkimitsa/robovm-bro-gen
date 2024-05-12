@@ -20,6 +20,7 @@ require 'ffi/clang'
 require 'yaml'
 require 'fileutils'
 require 'pathname'
+require 'strscan'
 require 'tmpdir'
 
 class String
@@ -5046,6 +5047,22 @@ ARGV[1..-1].each do |yaml_file|
         l.empty? ? nil : (keyword + ' ' + l.join(', '))
     end
 
+    def demangle_swift_class_name(name)
+        if name.start_with?("_TtC")
+            s = StringScanner.new name[4..]
+            res = nil
+            while (!s.eos?())
+               sz = s.scan(/\d+/)&.to_i
+               return name unless sz or sz == 0
+               val = s.scan(/.{#{sz}}/)
+               return name unless val
+               res = res ? res + '.' + val : val
+            end
+            return res if res
+        end
+        return name
+    end
+
     model.objc_classes.find_all { |cls| !cls.is_opaque? } .each do |cls|
         c = model.get_class_conf(cls.name)
         if !c  && model.is_included?(cls) && cls.is_available? && !cls.is_outdated? && !cls.is_opaque?
@@ -5055,6 +5072,7 @@ ARGV[1..-1].each do |yaml_file|
         next unless c && !c['exclude'] && !c['transitive'] && cls.is_available? && !cls.is_outdated?
         name = c['name'] || cls.java_name
         runtime_name = cls.valueAttributeForKey("objc_runtime_name")
+        runtime_name = demangle_swift_class_name(runtime_name) if runtime_name
         runtime_name = "(\"#{runtime_name}\")" if runtime_name
         data = template_datas[name] || {}
         if cls.template_params.empty?
