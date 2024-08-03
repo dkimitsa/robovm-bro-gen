@@ -3293,15 +3293,8 @@ def get_generic_type(model, owner, method, type, index, conf_type, name = nil)
     end
 end
 
-def property_to_java(model, owner, prop, props_conf, seen, adapter = false)
+def property_to_java(model, owner, prop, conf, seen, adapter = false)
     return [] if prop.is_outdated?
-
-    # if static -- try to get configuration for it
-    conf = prop.is_static? ? model.get_conf_for_key("+" + prop.name, props_conf) : nil
-    # sanity check for regexp, as + can get into name, just for compatibility mode
-    conf = nil if conf && ((!conf['getter'].nil? && conf['getter'].start_with?('+')) || (!conf['setter'].nil? && conf['setter'].start_with?('+')) || (!conf['name'].nil? && conf['name'].start_with?('+')))
-    # if not found try to look for regular one (comp mode)
-    conf ||= model.get_conf_for_key(prop.name, props_conf) || {}
 
     if !conf['exclude']
         name = conf['name'] || prop.name
@@ -5072,8 +5065,14 @@ ARGV[1..-1].each do |yaml_file|
         next unless c && !c['exclude'] && !c['transitive'] && cls.is_available? && !cls.is_outdated?
         name = c['name'] || cls.java_name
         runtime_name = cls.valueAttributeForKey("objc_runtime_name")
-        runtime_name = demangle_swift_class_name(runtime_name) if runtime_name
-        runtime_name = "(\"#{runtime_name}\")" if runtime_name
+        if runtime_name != nil
+            runtime_name = demangle_swift_class_name(runtime_name)
+            runtime_name = "(\"#{runtime_name}\")" if runtime_name
+        elsif name != cls.name
+            # use runtime name if objc name is different from requested by config, otherwise class will be not
+            # found during runtime
+            runtime_name = "(\"#{cls.name}\")"
+        end
         data = template_datas[name] || {}
         if cls.template_params.empty?
             data['name'] = name
@@ -5207,7 +5206,8 @@ ARGV[1..-1].each do |yaml_file|
             end
             # TODO: temporaly don't add static properties to interfaces
             members.find_all { |m| m.is_a?(Bro::ObjCProperty) && m.is_available? && !(m.is_static? && owner.is_a?(Bro::ObjCProtocol))}.each do |p|
-                properties_lines.concat(property_to_java(model, owner, p, c['properties'] || {}, {}, true))
+                conf = model.get_conf_for_key(p.name, c['properties'] || {}) || {}
+                properties_lines.concat(property_to_java(model, owner, p, conf, {}, true))
             end
         end
 
@@ -5378,7 +5378,8 @@ ARGV[1..-1].each do |yaml_file|
             end
             # TODO: temporaly don't add static properties to interfaces
             members.find_all { |m| m.is_a?(Bro::ObjCProperty) && m.is_available? && !(m.is_static? && owner.is_a?(Bro::ObjCProtocol))}.each do |p|
-                properties_lines.concat(property_to_java(model, owner, p, members_conf['properties'] || {}, seen))
+                prop_conf, prop_owner = resolve_member_config(model, owner, p, member_owner: members_owner, conf_key:"properties", include_protocols: false)
+                properties_lines.concat(property_to_java(model, owner, p, prop_conf || {}, seen))
             end
         end
 
