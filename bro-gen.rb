@@ -4273,6 +4273,9 @@ ARGV[1..-1].each do |yaml_file|
         # making sort stable
         vals = vals.sort_by.with_index { |v_vconf, idx| [v_vconf[1]['static_class'] || "", idx]}
 
+        # flag that values were added to owner itself (e.g. not all items went to statics)
+        owner_has_values = false
+
         methods_s = vals.map do |(v, vconf)|
             lines = []
             java_name = v.java_name()
@@ -4293,6 +4296,8 @@ ARGV[1..-1].each do |yaml_file|
                 lines.push("@Library(#{$library})", "public static class #{last_static_class} {", "    static { Bro.bind(#{last_static_class}.class); }\n")
             end
             indentation = last_static_class.nil? ? '' : '    '
+            owner_has_values |= true if last_static_class.nil?
+            binding.pry if owner == "HelpshiftDelegate" && owner_has_values
 
             model.push_availability(v, lines, indentation)
             if vconf.key?('dereference') && !vconf['dereference']
@@ -4312,8 +4317,12 @@ ARGV[1..-1].each do |yaml_file|
 
         data['methods'] = (data['methods'] || '') + "\n    #{methods_s}\n    "
         data['imports'] = (data['imports'] || [].concat(imports))
-        data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})")
-        data['bind'] = "static { Bro.bind(#{owner}.class); }"
+        if owner_has_values
+            # adding following lines only if owner has values. otherwise static initialization would cause
+            # compilation error if adding static const classes to interface
+            data['annotations'] = (data['annotations'] || []).push("@Library(#{$library})")
+            data['bind'] = "static { Bro.bind(#{owner}.class); }"
+        end
         template_datas[owner] = data
     end
 
