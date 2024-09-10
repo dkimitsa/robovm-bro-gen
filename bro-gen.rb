@@ -71,6 +71,13 @@ class String
     end
 end
 
+# FIXME: visit_children is missing starting ffi-clang v0.10.0, simulate it with extension
+class FFI::Clang::Cursor
+    def visit_children(&block)
+        each(recurse = false, &block)
+    end
+end
+
 module Bro
     def self.location_to_id(location)
         "#{location.file}:#{location.offset}"
@@ -2613,7 +2620,7 @@ module Bro
             elsif type.kind == :type_block_pointer
                 begin
                     ret_type = resolve_type(owner, type.pointee.result_type)
-                    param_types = (0..type.pointee.num_arg_types-1).map { |idx| resolve_type(owner, type.pointee.arg_type(idx), generic: true)}
+                    param_types = (0..type.pointee.args_size - 1).map { |idx| resolve_type(owner, type.pointee.arg_type(idx), generic: true)}
                     Block.new(self, ret_type, param_types)
                 rescue => e
                     $stderr.puts "WARN: Unknown block type #{name}. Using ObjCBlock. Failed to convert due: #{e}"

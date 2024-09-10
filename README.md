@@ -8,8 +8,8 @@
 
  * libclang 3.4+ (will use the one from Xcode if installed)
  * Ruby
- * Ruby ffi (1.16.3+)
- * Ruby ffi-clang (v0.9.0+)
+ * Ruby ffi (1.17.0+)
+ * Ruby ffi-clang (v0.10.0+)
 
 ## Getting the code.  
 Important: checkout both `robovm-bro-gen` and `robovm` to same root. This allows to use using `cocoa-touch` yaml files for iOS system frameworks.
