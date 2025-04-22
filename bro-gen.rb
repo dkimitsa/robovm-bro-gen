@@ -3792,7 +3792,7 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '17'
+$ios_version = '18.2'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be suppressed if ver <= 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
@@ -3839,6 +3839,9 @@ ARGV[1..-1].each do |yaml_file|
         header_root = framework_roots[0] + "/#{framework}.lib/Headers"
     elsif File.exist?(File.expand_path(File.dirname(yaml_file)) + "/#{framework}.framework/Headers") # RoboPods Framework
         framework_roots[0] = File.expand_path(File.dirname(yaml_file))
+        header_root = framework_roots[0] + "/#{framework}.framework/Headers"
+    elsif File.exist?(File.expand_path(File.dirname(yaml_file)) + "/../robopods/META-INF/robovm/ios/libs/#{framework}.xcframework/ios-arm64/#{framework}.framework/Headers") # RoboPods Framework
+        framework_roots[0] = File.expand_path(File.dirname(yaml_file)) + "/../robopods/META-INF/robovm/ios/libs/#{framework}.xcframework/ios-arm64"
         header_root = framework_roots[0] + "/#{framework}.framework/Headers"
     elsif File.exist?(File.expand_path(File.dirname(yaml_file)) + "/../robopods/META-INF/robovm/ios/libs/#{framework}.framework/Headers") # RoboPods Framework
         framework_roots[0] = File.expand_path(File.dirname(yaml_file)) + "/../robopods/META-INF/robovm/ios/libs"
