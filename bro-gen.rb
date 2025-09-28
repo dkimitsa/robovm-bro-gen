@@ -722,7 +722,14 @@ module Bro
                     a = Bro.read_attribute(cursor)
                     if a.start_with?('aligned(') && a.end_with?(')')
                         align = a.sub('aligned(', '')[0..-2]
-                        align = eval(align).to_i
+                        if align == "_Alignof(unsigned int)" || align == "_Alignof(int)" 
+                            align = 4
+                        elsif align == "_Alignof(long)"
+                            align = 8
+                            # and so on 
+                        else 
+                            align = eval(align).to_i
+                        end
                         align_attr_value = align
                     end
                 when :cursor_field_decl
