@@ -2035,7 +2035,7 @@ module Bro
         attr_accessor :values, :type, :enum_type
         def initialize(model, cursor)
             super(model, cursor)
-            @name = "" if @name.start_with?('enum (unnamed at')
+            @name = nil if @name.start_with?('enum (unnamed at') || @name == ""
             @values = []
             @type = cursor.type
             @enum_type = cursor.enum_type
@@ -2075,7 +2075,39 @@ module Bro
 
         def enum_conf
             unless @enum_conf
-                @enum_conf = @model.conf_enums[name] || (@model.conf_enums.find { |k, v| k == name || v['first'] == values.first.name } || [{}, {}])[1]
+                if @name
+                    # enum has name, pick by it, then try by first element
+                    @enum_conf = @model.conf_enums[@name]
+                    unless @enum_conf
+                        @name, @enum_conf = @model.conf_enums.find { |k, v| v['first'] == values.first.name } || [ @name, nil ]
+                    end
+                else
+                    # there is no name, try to get both name and conf 
+                    # find by first element
+                    @name, @enum_conf = @model.conf_enums.find { |k, v| v['first'] == values.first.name }
+
+                    unless @name
+                        if @model.cfenums.include?(@id) || @model.cfoptions.include?(@id)
+                            # This is a CF_ENUM or CF_OPTIONS. Find the typedef with the same location and use its name.
+                            td = @model.typedefs.find { |e| e.id == @id }
+                            @name = td.name if td 
+                            binding.pry if @name  # TODO: FIXME: to check if this ever happens 
+                            @enum_conf = @model.conf_enums[@name] if @name
+                        end
+                    end
+
+#                     unless @name
+#                         # pick enum name from enum type
+#                         if @enum_type && @enum_type.kind == :type_elaborated && @enum_type.spelling != 'UInt32' && @enum_type.spelling != 'SInt32'
+#                             n = @enum_type.spelling
+#                             @enum_conf = @model.conf_enums[n] if n
+#                             @name = n if @enum_conf # pick this name only if it is configured
+#                             @suggested_name = n
+#                         end
+#                     end
+                end
+                @name ||= ""
+                @enum_conf ||= {}
             end
             @enum_conf
         end
@@ -2088,16 +2120,16 @@ module Bro
             if @prefix
                 @prefix
             else
-                name = self.name
                 @prefix = enum_conf['prefix']
                 return @prefix if @prefix
+                n = self.name
                 if @values.size == 1
                     # calculate prefix from name
                     @prefix = @values[0].name.dup
-                    if @prefix && name && prefix.start_with?(name + "_")
-                        @prefix = name + "_"
-                    elsif @prefix && name && prefix.start_with?(name)
-                        @prefix = name
+                    if @prefix && n && prefix.start_with?(n + "_")
+                        @prefix = n + "_"
+                    elsif @prefix && name && prefix.start_with?(n)
+                        @prefix = n
                     end
                 elsif @values.size > 1
                     # Determine common prefix
@@ -2112,32 +2144,24 @@ module Bro
                     # if calculated prefix is longer than name but name is
                     # common prefix, use name as prefix, otherwise it might cut
                     # elements name
-                    if @prefix && name && prefix.start_with?(name + "_")
+                    if @prefix && n && prefix.start_with?(n + "_")
                         @prefix = name + "_"
-                    elsif @prefix && name && prefix.start_with?(name)
-                        @prefix = name
+                    elsif @prefix && n && prefix.start_with?(n)
+                        @prefix = n
                     end
                 end
 
                 unless @prefix
-                    $stderr.puts "WARN: Failed to determine prefix for enum #{name} with first #{@values[0].name} at #{Bro.location_to_s(@location)}"
+                    $stderr.puts "WARN: Failed to determine prefix for enum #{n} with first #{@values[0].name} at #{Bro.location_to_s(@location)}"
                     @prefix = ''
                 end
                 @prefix
             end
         end
-        alias super_name name
         def name
-            n = nil
-            n = ((@model.conf_enums.find { |_k, v| v['first'] == values.first.name }) || [nil]).first if values.length > 0
-            unless n
-                if @model.cfenums.include?(@id) || @model.cfoptions.include?(@id)
-                    # This is a CF_ENUM or CF_OPTIONS. Find the typedef with the same location and use its name.
-                    td = @model.typedefs.find { |e| e.id == @id }
-                    n = td ? td.name : nil
-                end
-            end
-            n || super_name
+            # get conf, it will resolve @name from config/type
+            c = enum_conf
+            @name
         end
 
         def is_options?
@@ -2151,6 +2175,10 @@ module Bro
 
         def merge_with
             enum_conf['merge_with']
+        end
+
+        def extendable
+            enum_conf['extendable']
         end
 
         # finding low level type of storage type as storage type can be specified as typedef type
@@ -3029,6 +3057,7 @@ module Bro
                     cat = ObjCCategory.new self, cursor
                     c = get_category_conf("#{cat.name}@#{cat.owner}")
                     c = get_category_conf(cat.name) unless c
+                    c = get_category_conf(cat.owner) unless c
                     if c && c['protocol']
                         @objc_protocols.push ObjCProtocol.new self, cursor
                     else
@@ -3055,6 +3084,15 @@ module Bro
                     end
                     other.values.push(e.values).flatten!
                     nil
+                elsif e.extendable
+                    other = @enums.find { |f| e.name == f.name }
+                    r = e
+                    if other && other != e
+                        puts ">>> combine_by_type #{e.name} -> other #{e.values.first.name} "
+                        other.values.push(e.values).flatten!
+                        r = nil
+                    end
+                    r
                 else
                     e
                 end
@@ -3709,6 +3747,8 @@ def clang_preprocess(headers, args)
         f.puts "#import <Foundation/NSObjCRuntime.h>"
         f.puts "#undef NS_OPTIONS"
         f.puts "#undef CF_OPTIONS"
+        f.puts "#undef CF_ENUM"
+        f.puts "#undef NS_ENUM"
     end
 
     headers_h = File.join(tmp_dir, '__headers.h')
@@ -3778,6 +3818,8 @@ def clang_preprocess(headers, args)
     File.open(restores_main_h, 'w') do |f|
         f.puts "#define NS_OPTIONS(_type, _name) enum _name : _type _name; enum _name : _type"
         f.puts "#define CF_OPTIONS(_type, _name) enum _name : _type _name; enum _name : _type"
+        f.puts "#define NS_ENUM(_type, _name) enum _name : _type _name; enum _name : _type"
+        f.puts "#define CF_ENUM(_type, _name) enum _name : _type _name; enum _name : _type"
         f.puts "#import \"#{main_file}\""
     end
     return restores_main_h
