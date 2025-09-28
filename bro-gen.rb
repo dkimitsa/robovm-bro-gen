@@ -2615,7 +2615,7 @@ module Bro
                 dimensions = []
                 base_type = type
                 while base_type.kind == :type_constant_array
-                    dimensions.push base_type.array_size
+                    dimensions.push base_type.size
                     base_type = base_type.element_type
                 end
                 if allow_arrays
