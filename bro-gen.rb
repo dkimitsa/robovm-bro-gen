@@ -159,7 +159,7 @@ module Bro
         def is_outdated?
             if deprecated
                 d_version = deprecated
-                (d_version > 0 && d_version <= @model.min_usable_version) || (d_version < 0 && @model.exclude_deprecated?)
+                (d_version > 0 && d_version < @model.min_usable_version) || (d_version < 0 && @model.exclude_deprecated?)
             else
                 false
             end
@@ -1199,7 +1199,7 @@ module Bro
                     end
                     @attributes.push attribute
                 else
-                    raise "Unknown cursor kind #{cursor.kind} in ObjC class at #{Bro.location_to_s(@location)}"
+                    raise "Unknown cursor kind #{cursor.kind} #{cursor.spelling} in ObjC class at #{Bro.location_to_s(@location)}"
                 end
                 next :continue
             end
@@ -3799,8 +3799,8 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '18.2'
-$ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be suppressed if ver <= 8.0
+$ios_version = '26.0'
+$ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be suppressed if ver < 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
 sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
