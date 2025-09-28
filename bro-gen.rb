@@ -982,7 +982,7 @@ module Bro
             @attrs = !$1.nil? ? $1.strip.slice(1..-2).split(/,\s*/) : []
             @attrs = @attrs.each_with_object({}) do |o, h|
                 pair = o.split(/\s*=\s*/)
-                h[pair[0]] = pair.size > 1 ? pair[1] : true
+                h[pair[0].strip] = pair.size > 1 ? pair[1].strip : true
                 h
             end
             cursor.visit_children do |cursor, _parent|
@@ -4314,7 +4314,6 @@ ARGV[1..-1].each do |yaml_file|
             end
             indentation = last_static_class.nil? ? '' : '    '
             owner_has_values |= true if last_static_class.nil?
-            binding.pry if owner == "HelpshiftDelegate" && owner_has_values
 
             model.push_availability(v, lines, indentation)
             if vconf.key?('dereference') && !vconf['dereference']
@@ -4877,11 +4876,14 @@ ARGV[1..-1].each do |yaml_file|
 
     unassigned_categories = []
     model.objc_categories.each do |cat|
+        # skip not available and outdated
+        next unless cat.is_available? && !cat.is_outdated?
         # skip category if exactly specified
+
         exact_c = c = model.get_category_conf("#{cat.name}@#{cat.owner}")
         next if exact_c && exact_c['exclude'] == true
 
-        c = exact_c || model.get_category_conf(cat.name)
+        c = exact_c || model.get_category_conf(cat.name) || model.get_category_conf(cat.owner)
         owner_name = c && c['owner'] || cat.owner
         owner_cls = model.objc_classes.find { |e| e.name == owner_name }
         owner = nil
@@ -5261,6 +5263,9 @@ ARGV[1..-1].each do |yaml_file|
         cls = owner
         cls_conf = model.get_class_conf(cls.name) if cls.is_a?(Bro::ObjCClass)
         cls_conf = model.get_protocol_conf(cls.name) if cls.is_a?(Bro::ObjCProtocol)
+        if cls.is_a?(Bro::ObjCCategory)
+            cls_conf = model.get_category_conf("#{cls.name}@#{cls.owner}") || model.get_category_conf(cls.name) || model.get_category_conf(cls.owner)
+        end
         member_owner ||= owner # in case not provided
 
         if bottom_limit == owner
@@ -5404,7 +5409,7 @@ ARGV[1..-1].each do |yaml_file|
             end
             # TODO: temporaly don't add static properties to interfaces
             members.find_all { |m| m.is_a?(Bro::ObjCProperty) && m.is_available? && !(m.is_static? && owner.is_a?(Bro::ObjCProtocol))}.each do |p|
-                prop_conf, prop_owner = resolve_member_config(model, owner, p, member_owner: members_owner, conf_key:"properties", include_protocols: false)
+                prop_conf, prop_owner = resolve_member_config(model, owner, p, member_owner: members_owner, conf_key:"properties", include_protocols: true)
                 properties_lines.concat(property_to_java(model, owner, p, prop_conf || {}, seen))
             end
         end
