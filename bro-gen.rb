@@ -4817,7 +4817,7 @@ ARGV[1..-1].each do |yaml_file|
 
                 if owner != cls
                     mconf = methods_conf[full_name]
-                    statics.push(method) unless mconf && (mconf["exclude"] == true || mconf["constructor"] == true)
+                    statics.push(method) unless mconf && (mconf["exclude"] == true || (mconf["constructor"] == true && method.return_type.spelling != 'instancetype')) 
                 end
             end
             # duplicate static properties
