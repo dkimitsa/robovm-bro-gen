@@ -1192,6 +1192,8 @@ module Bro
                     @class_methods.push(ObjCClassMethod.new(model, cursor, self))
                 when :cursor_obj_c_property_decl
                     @properties.push(ObjCProperty.new(model, cursor, self))
+                when :cursor_annotate_attr
+                    # TODO: check if useful
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
@@ -1256,6 +1258,8 @@ module Bro
                     @class_methods.push(ObjCClassMethod.new(model, cursor, self))
                 when :cursor_obj_c_property_decl
                     @properties.push(ObjCProperty.new(model, cursor, self))
+                when :cursor_annotate_attr
+                    # TODO: check if useful
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
@@ -2091,7 +2095,6 @@ module Bro
                             # This is a CF_ENUM or CF_OPTIONS. Find the typedef with the same location and use its name.
                             td = @model.typedefs.find { |e| e.id == @id }
                             @name = td.name if td 
-                            binding.pry if @name  # TODO: FIXME: to check if this ever happens 
                             @enum_conf = @model.conf_enums[@name] if @name
                         end
                     end
@@ -2359,7 +2362,7 @@ module Bro
                     # expand value enum/dictionary to container class (as these are not subclass of NSObject and will fail to compile on containers)
                     gtype = resolve_type_by_name(gtype.java_type) if gtype.is_a?(GlobalValueEnumeration) 
                     gtype = resolve_type_by_name(gtype.java_type) if gtype.is_a?(GlobalValueDictionaryWrapper) && !allow_dict_wrapper
-                    valid_generics = gtype.is_a?(ObjCClass) || gtype.is_a?(ObjCProtocol) || gtype.is_a?(Typedef) || gtype.is_a?(Builtin) || (allow_dict_wrapper && gtype.is_a?(GlobalValueDictionaryWrapper))
+                    valid_generics = gtype.is_a?(ObjCClass) || gtype.is_a?(ObjCProtocol) || gtype.is_a?(Typedef) || gtype.is_a?(Builtin) || (allow_dict_wrapper && gtype.is_a?(GlobalValueDictionaryWrapper)) || gtype.respond_to?('each') 
                     break unless valid_generics
                     generic_types.push(gtype)
                 end
@@ -2476,16 +2479,20 @@ module Bro
                 # then check for classes 
                 e ||= @objc_classes.find { |e| e.name == name }
                 e
-            elsif type.kind == :type_obj_c_object_pointer || type.kind == 161 # CXType_ObjCObject = 161 # consider point to obj and objc object same
-                name = type.pointee.spelling
-                if type.pointee.kind == :type_typedef
-                    # look up for case typedef NSObject MYObject;
-                    td = @typedefs.find { |e| e.name == name }
-                    name = td.typedef_type.spelling if td
-                elsif type.pointee.kind == :type_elaborated && type.pointee.declaration.kind == :cursor_typedef_decl
-                    # look up for case typedef NSObject MYObject;
-                    td = @typedefs.find { |e| e.name == type.pointee.spelling }
-                    name = td.typedef_type.spelling if td
+            elsif type.kind == :type_obj_c_object_pointer || type.kind == :type_objc_object # CXType_ObjCObject = 161 # consider point to obj and objc object same
+                if type.kind == :type_obj_c_object_pointer 
+                    name = type.pointee.spelling
+                    if type.pointee.kind == :type_typedef
+                        # look up for case typedef NSObject MYObject;
+                        td = @typedefs.find { |e| e.name == name }
+                        name = td.typedef_type.spelling if td
+                    elsif type.pointee.kind == :type_elaborated && type.pointee.declaration.kind == :cursor_typedef_decl
+                        # look up for case typedef NSObject MYObject;
+                        td = @typedefs.find { |e| e.name == type.pointee.spelling }
+                        name = td.typedef_type.spelling if td
+                    end
+                else 
+                    name = type.spelling
                 end
                 name = name.gsub(/__kindof\s*/, '')
                 name = name.gsub(/\s*\bconst\b\s*/, '')
@@ -2522,7 +2529,7 @@ module Bro
                         # typed_enum#dict if such is found
                         if type_name == "NSDictionary" 
                             gt = resolve_template_params(owner, generic_name, true)
-                            if gt && gt.length == 2 && gt[1].java_name == "?" && gt[0].is_a?(GlobalValueDictionaryWrapper)
+                            if gt && gt.length == 2 && to_java_type(gt[1]) == "?" && gt[0].is_a?(GlobalValueDictionaryWrapper)
                                 # replace with dictionary wrapper 
                                 return gt[0]
                             end
@@ -2802,11 +2809,11 @@ module Bro
             elsif notAcceptingProto.include?(ownerName)
                 # protocols are not allowed in NS containers yet
                 "#{ownerName}<" + type[1..-1].map{ |e|
-                    e.is_a?(ObjCProtocol) && !e.is_class? ? '?' : e.java_name
+                    e.is_a?(ObjCProtocol) && !e.is_class? ? '?' : to_java_type(e)
                 }.join(", ") + ">"
             else
                 # generic
-                "#{ownerName}<" + type[1..-1].map{ |e| e.java_name}.join(", ") + ">"
+                "#{ownerName}<" + type[1..-1].map{ |e| to_java_type(e)}.join(", ") + ">"
             end
         end
 
@@ -3088,7 +3095,6 @@ module Bro
                     other = @enums.find { |f| e.name == f.name }
                     r = e
                     if other && other != e
-                        puts ">>> combine_by_type #{e.name} -> other #{e.values.first.name} "
                         other.values.push(e.values).flatten!
                         r = nil
                     end
@@ -3646,7 +3652,7 @@ def method_to_java(model, owner_name, owner, method_owner, method, conf, seen, a
                 # creating static wrapper to call corresponding init
                 constructor_lines << "@Method(selector = \"#{method.name}\")"
                 if conf['throws']
-                    constructor_lines << "#{constructor_visibility} static #{generics_s.size>0 ? ' ' + generics_s : ''} #{owner_name} #{static_constructor_name}(#{throw_parameters_s}) throws #{conf['throws']}  {"
+                    constructor_lines << "#{constructor_visibility} static #{generics_s.size > 0 ? generics_s + ' ': ''}#{owner_name} #{static_constructor_name}(#{throw_parameters_s}) throws #{conf['throws']}  {"
                     constructor_lines << "   #{owner_name} res = new #{owner_name}((SkipInit) null);"
                     constructor_lines << "   #{error_type}.#{error_type}Ptr ptr = new #{error_type}.#{error_type}Ptr();"
                     constructor_lines << "   res.initObject(res.#{name}(#{throw_args_s}));"
@@ -3654,7 +3660,7 @@ def method_to_java(model, owner_name, owner, method_owner, method, conf, seen, a
                     constructor_lines << "   return res;"
                     constructor_lines << "}"
                 else
-                    constructor_lines << "#{constructor_visibility} static #{generics_s.size>0 ? ' ' + generics_s : ''} #{owner_name} #{static_constructor_name}(#{parameters_s}) {"
+                    constructor_lines << "#{constructor_visibility} static #{generics_s.size>0 ? generics_s + ' ': ''}#{owner_name} #{static_constructor_name}(#{parameters_s}) {"
                     constructor_lines << "   #{owner_name} res = new #{owner_name}((SkipInit) null);"
                     constructor_lines << "   res.initObject(res.#{name}(#{args_s}));"
                     constructor_lines << "   return res;"
@@ -5189,7 +5195,7 @@ ARGV[1..-1].each do |yaml_file|
 
     model.objc_protocols.each do |prot|
         c = model.get_protocol_conf(prot.name)
-        if !c  &&  model.is_included?(prot) && prot.is_available? && !prot.is_outdated? && !prot.is_opaque?
+        if !c &&  model.is_included?(prot) && prot.is_available? && !prot.is_outdated? && !prot.is_opaque?
             $stderr.puts "CONV: missing protocol #{prot.java_name}"
         end
         next unless c && !c['exclude'] && !c['transitive'] && !prot.is_outdated?
