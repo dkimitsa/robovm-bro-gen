@@ -722,12 +722,12 @@ module Bro
                     a = Bro.read_attribute(cursor)
                     if a.start_with?('aligned(') && a.end_with?(')')
                         align = a.sub('aligned(', '')[0..-2]
-                        if align == "_Alignof(unsigned int)" || align == "_Alignof(int)" 
+                        if align == "_Alignof(unsigned int)" || align == "_Alignof(int)"
                             align = 4
                         elsif align == "_Alignof(long)"
                             align = 8
-                            # and so on 
-                        else 
+                            # and so on
+                        else
                             align = eval(align).to_i
                         end
                         align_attr_value = align
@@ -2086,7 +2086,7 @@ module Bro
                         @name, @enum_conf = @model.conf_enums.find { |k, v| v['first'] == values.first.name } || [ @name, nil ]
                     end
                 else
-                    # there is no name, try to get both name and conf 
+                    # there is no name, try to get both name and conf
                     # find by first element
                     @name, @enum_conf = @model.conf_enums.find { |k, v| v['first'] == values.first.name }
 
@@ -2094,7 +2094,7 @@ module Bro
                         if @model.cfenums.include?(@id) || @model.cfoptions.include?(@id)
                             # This is a CF_ENUM or CF_OPTIONS. Find the typedef with the same location and use its name.
                             td = @model.typedefs.find { |e| e.id == @id }
-                            @name = td.name if td 
+                            @name = td.name if td
                             @enum_conf = @model.conf_enums[@name] if @name
                         end
                     end
@@ -2195,7 +2195,7 @@ module Bro
                     t = @model.resolve_typedef(@enum_type)
                 end
                 # in case of Builtin -- use its name as it was divided into separate entries to deliver
-                # ability to pick information about signed/insigned
+                # ability to pick information about signed/unsigned
                 @raw_storage_type = t.is_a?(Builtin) ? t.storage_type : t.java_name
             end
 
@@ -2362,7 +2362,7 @@ module Bro
                     # expand value enum/dictionary to container class (as these are not subclass of NSObject and will fail to compile on containers)
                     gtype = resolve_type_by_name(gtype.java_type) if gtype.is_a?(GlobalValueEnumeration) 
                     gtype = resolve_type_by_name(gtype.java_type) if gtype.is_a?(GlobalValueDictionaryWrapper) && !allow_dict_wrapper
-                    valid_generics = gtype.is_a?(ObjCClass) || gtype.is_a?(ObjCProtocol) || gtype.is_a?(Typedef) || gtype.is_a?(Builtin) || (allow_dict_wrapper && gtype.is_a?(GlobalValueDictionaryWrapper)) || gtype.respond_to?('each') 
+                    valid_generics = gtype.is_a?(ObjCClass) || gtype.is_a?(ObjCProtocol) || gtype.is_a?(Typedef) || gtype.is_a?(Builtin) || (allow_dict_wrapper && gtype.is_a?(GlobalValueDictionaryWrapper)) || gtype.respond_to?('each')
                     break unless valid_generics
                     generic_types.push(gtype)
                 end
@@ -2480,7 +2480,7 @@ module Bro
                 e ||= @objc_classes.find { |e| e.name == name }
                 e
             elsif type.kind == :type_obj_c_object_pointer || type.kind == :type_objc_object # CXType_ObjCObject = 161 # consider point to obj and objc object same
-                if type.kind == :type_obj_c_object_pointer 
+                if type.kind == :type_obj_c_object_pointer
                     name = type.pointee.spelling
                     if type.pointee.kind == :type_typedef
                         # look up for case typedef NSObject MYObject;
@@ -2491,7 +2491,7 @@ module Bro
                         td = @typedefs.find { |e| e.name == type.pointee.spelling }
                         name = td.typedef_type.spelling if td
                     end
-                else 
+                else
                     name = type.spelling
                 end
                 name = name.gsub(/__kindof\s*/, '')
@@ -3746,7 +3746,7 @@ def clang_preprocess(headers, args)
     at_exit { FileUtils.remove_entry(tmp_dir)}
     main_file = nil
 
-    # prepare MACRO overrides to save NS_OPTIONS macro as it is usefull for
+    # prepare MACRO overrides to save NS_OPTIONS macro as it is useful for
     # generating BIT enums
     overrides_h = File.join(tmp_dir, '__overrides.h')
     File.open(overrides_h, 'w') do |f|
@@ -3847,7 +3847,7 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '26.0'
+$ios_version = '26.1'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be suppressed if ver < 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
@@ -4865,7 +4865,7 @@ ARGV[1..-1].each do |yaml_file|
 
                 if owner != cls
                     mconf = methods_conf[full_name]
-                    statics.push(method) unless mconf && (mconf["exclude"] == true || (mconf["constructor"] == true && method.return_type.spelling != 'instancetype')) 
+                    statics.push(method) unless mconf && (mconf["exclude"] == true || (mconf["constructor"] == true && method.return_type.spelling != 'instancetype'))
                 end
             end
             # duplicate static properties
