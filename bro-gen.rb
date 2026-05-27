@@ -23,6 +23,10 @@ require 'pathname'
 require 'strscan'
 require 'tmpdir'
 
+def log
+    Bro.log
+end
+
 class String
     def camelize
         dup.camelize!
@@ -79,6 +83,41 @@ class FFI::Clang::Cursor
 end
 
 module Bro
+    class Log
+        attr_accessor :silent
+
+        def initialize(out = $stdout, err = $stderr)
+            @out = out
+            @err = err
+            @silent = false
+        end
+
+        def d(*messages)
+            return if silent
+
+            @out.puts(*messages)
+        end
+
+        def w(*messages)
+            return if silent
+
+            @err.puts(*messages)
+        end
+
+        def puts(*messages)
+            # unconditional print, even if silent mode
+            @out.puts(*messages)
+        end
+
+        def e(*messages)
+            @err.puts(*messages)
+        end
+    end
+
+    def self.log
+        @log ||= Log.new
+    end
+
     def self.location_to_id(location)
         "#{location.file}:#{location.offset}"
     end
@@ -643,7 +682,7 @@ module Bro
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
-                        $stderr.puts "WARN: Typedef #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
+                        log.w "WARN: Typedef #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
                     @attributes.push attribute
                 else
@@ -899,7 +938,7 @@ module Bro
                 when :cursor_asm_label_attr, :cursor_unexposed_attr, :cursor_annotate_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
-                        $stderr.puts "WARN: Function #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
+                        log.w "WARN: Function #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
                     @attributes.push attribute
                 else
@@ -1001,7 +1040,7 @@ module Bro
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
-                        $stderr.puts "WARN: ObjC property #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
+                        log.w "WARN: ObjC property #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
                     @attributes.push attribute
                 else
@@ -1197,7 +1236,7 @@ module Bro
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
-                        $stderr.puts "WARN: ObjC class #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
+                        log.w "WARN: ObjC class #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
                     @attributes.push attribute
                 else
@@ -1263,7 +1302,7 @@ module Bro
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
-                        $stderr.puts "WARN: ObjC protocol #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
+                        log.w "WARN: ObjC protocol #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
                     @attributes.push attribute
                 else
@@ -1321,7 +1360,7 @@ module Bro
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
-                        $stderr.puts "WARN: ObjC category #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
+                        log.w "WARN: ObjC category #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
                     @attributes.push attribute
                 else
@@ -1873,7 +1912,7 @@ module Bro
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
-                        $stderr.puts "WARN: Global value #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
+                        log.w "WARN: Global value #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
                     @attributes.push attribute
                 else
@@ -1969,7 +2008,7 @@ module Bro
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
-                        $stderr.puts "WARN: Const value #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
+                        log.w "WARN: Const value #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
                     @attributes.push attribute
                 end
@@ -2000,7 +2039,7 @@ module Bro
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
-                        $stderr.puts "WARN: Enum value #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
+                        log.w "WARN: Enum value #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute '#{attribute.source}'"
                     end
                     @attributes.push attribute
                 end
@@ -2058,7 +2097,7 @@ module Bro
                 when :cursor_unexposed_attr
                     attribute = Bro.parse_attribute(cursor)
                     if attribute.is_a?(UnsupportedAttribute) && model.is_included?(self)
-                        $stderr.puts "WARN: enum #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute #{Bro.read_attribute(cursor)}"
+                        log.w "WARN: enum #{@name} at #{Bro.location_to_s(@location)} has unsupported attribute #{Bro.read_attribute(cursor)}"
                     end
                     @attributes.push attribute
                 else
@@ -2155,7 +2194,7 @@ module Bro
                 end
 
                 unless @prefix
-                    $stderr.puts "WARN: Failed to determine prefix for enum #{n} with first #{@values[0].name} at #{Bro.location_to_s(@location)}"
+                    log.w "WARN: Failed to determine prefix for enum #{n} with first #{@values[0].name} at #{Bro.location_to_s(@location)}"
                     @prefix = ''
                 end
                 @prefix
@@ -2665,7 +2704,7 @@ module Bro
                     param_types = (0..type.pointee.args_size - 1).map { |idx| resolve_type(owner, type.pointee.arg_type(idx), generic: true)}
                     Block.new(self, ret_type, param_types)
                 rescue => e
-                    $stderr.puts "WARN: Unknown block type #{name}. Using ObjCBlock. Failed to convert due: #{e}"
+                    log.w "WARN: Unknown block type #{name}. Using ObjCBlock. Failed to convert due: #{e}"
                     Bro.builtins_by_type_kind(type.kind)
                 end
             elsif type.kind == :type_elaborated # CXType_Elaborated
@@ -2700,7 +2739,7 @@ module Bro
                     end
                 end
                 if !e
-                    $stderr.puts "WARN: Unknown elaborated type #{name}"
+                    log.w "WARN: Unknown elaborated type #{name}"
                     if name.start_with?('class ')
                         name = name.sub('class ', '')
                     end
@@ -3041,10 +3080,10 @@ module Bro
                             if const
                                 @constant_values.push const
                             else
-                                $stderr.puts "WARN: Failed to turning the global value #{cursor.spelling} into constants (eval failed), value #{value_orig}" if is_location_included?(cursor.location)
+                                log.w "WARN: Failed to turning the global value #{cursor.spelling} into constants (eval failed), value #{value_orig}" if is_location_included?(cursor.location)
                             end
                         else
-                            $stderr.puts "WARN: Ignoring static global value #{cursor.spelling} without value at #{Bro.location_to_s(cursor.location)}" if is_location_included?(cursor.location)
+                            log.w "WARN: Ignoring static global value #{cursor.spelling} without value at #{Bro.location_to_s(cursor.location)}" if is_location_included?(cursor.location)
                         end
                     end
                     next :continue
@@ -3116,7 +3155,7 @@ module Bro
             @functions = @functions.find_all do |f|
                 if f.is_variadic? || !f.parameters.empty? && f.parameters[-1].type.spelling == 'va_list'
                     definition = f.type.spelling.sub(/\(/, "#{f.name}(")
-                    $stderr.puts "WARN: Ignoring 'variadic' function '#{definition}' at #{Bro.location_to_s(f.location)}"
+                    log.w "WARN: Ignoring 'variadic' function '#{definition}' at #{Bro.location_to_s(f.location)}"
                     false
                 else
                     true
@@ -3127,7 +3166,7 @@ module Bro
             uniq_functions = @functions.uniq(&:name)
             (@functions - uniq_functions).each do |f|
                 definition = f.type.spelling.sub(/\(/, "#{f.name}(")
-                $stderr.puts "WARN: Ignoring duplicate function '#{definition}' at #{Bro.location_to_s(f.location)}"
+                log.w "WARN: Ignoring duplicate function '#{definition}' at #{Bro.location_to_s(f.location)}"
             end
             @functions = uniq_functions
 
@@ -3166,7 +3205,7 @@ end
 
 def dump_ast(cursor, indent="")
     cursor.visit_children do |cursor, _parent|
-        puts "#{indent}#{cursor.kind} '#{cursor.spelling}' #{cursor.type.kind} '#{cursor.type.spelling}' #{cursor.underlying_type ? cursor.underlying_type.kind : ''}"
+        log.d "#{indent}#{cursor.kind} '#{cursor.spelling}' #{cursor.type.kind} '#{cursor.type.spelling}' #{cursor.underlying_type ? cursor.underlying_type.kind : ''}"
         dump_ast cursor, "#{indent}    "
         next :continue
     end
@@ -3468,7 +3507,7 @@ def method_to_java(model, owner_name, owner, method_owner, method, conf, seen, a
     elsif method.is_variadic? || !method.parameters.empty? && method.parameters[-1].type.spelling == 'va_list'
         param_types = method.parameters.map { |e| e.type.spelling }
         param_types.push('...') if method.is_variadic?
-        $stderr.puts "WARN: Ignoring variadic method '#{owner.name}.#{method.name}(#{param_types.join(', ')})' at #{Bro.location_to_s(method.location)}"
+        log.w "WARN: Ignoring variadic method '#{owner.name}.#{method.name}(#{param_types.join(', ')})' at #{Bro.location_to_s(method.location)}"
         [[], []]
     elsif !conf['exclude']
         # is used to produce hints for faster yaml file construction
@@ -3857,7 +3896,20 @@ sysroot = "#{xcode_dir}/Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS.sdk"
 $dbg_dump_inline_fn = ENV.has_key?('BRO_DUMP_INLINE')  # generates inline functions with their original code in comments 
 
 script_dir = File.expand_path(File.dirname(__FILE__))
-target_dir = ARGV[0]
+args = ARGV.dup
+while args.first && args.first.start_with?('-')
+    arg = args.shift
+    case arg
+    when '-s'
+        log.silent = true
+    when '--'
+        break
+    else
+        abort("Unknown argument #{arg}")
+    end
+end
+target_dir = args.shift
+yaml_files = args
 templates_dir = script_dir + '/templates'
 def_class_template = IO.read("#{templates_dir}/class_template.java")
 def_enum_template = IO.read("#{templates_dir}/enum_template.java")
@@ -3868,8 +3920,8 @@ def_value_dictionary_template = IO.read("#{templates_dir}/value_dictionary_templ
 def_nserror_enum_template = IO.read("#{templates_dir}/nserror_enum_template.java")
 global = YAML.load_file("#{script_dir}/global.yaml")
 
-ARGV[1..-1].each do |yaml_file|
-    puts "Processing #{yaml_file}..."
+yaml_files.each do |yaml_file|
+    log.d "Processing #{yaml_file}..."
     conf = YAML.load_file(yaml_file)
 
     framework = conf['framework']
@@ -4021,9 +4073,9 @@ ARGV[1..-1].each do |yaml_file|
     translation_unit = index.parse_translation_unit(main_file, clang_args, [], [:detailed_preprocessing_record])
     translation_unit.diagnostics.each do |e|
          if (e.severity == :error)
-            $stderr.puts "Err: #{e.category} #{e.spelling} @ #{e.location.file} #{e.location.line}:#{e.location.column}"
+            log.e "Err: #{e.category} #{e.spelling} @ #{e.location.file} #{e.location.line}:#{e.location.column}"
             e.children.each do |c|
-                $stderr.puts "    #{c.spelling}"
+                log.e "    #{c.spelling}"
             end
          end
     end
@@ -4172,11 +4224,11 @@ ARGV[1..-1].each do |yaml_file|
         java_name = enum.java_name
         enum_typedef = model.typedefs.find { |e| e.name == enum.name }
         if enum_typedef && enum_typedef.typedef_type.spelling == "enum #{enum.name}"
-            $stderr.puts "\n\nWARN: Probably enum '#{enum.name}' is defined with 'typedef NS_ENUM/NS_OPTIONS' and not required marshaler"
+            log.w "\n\nWARN: Probably enum '#{enum.name}' is defined with 'typedef NS_ENUM/NS_OPTIONS' and not required marshaler"
         end
 
         if !marshaler_storage_type
-            $stderr.puts "\n\nWARN: Failed to resolve enum storage type for '#{marshaler}' marshaller in enum '#{enum.name}', use `marshaler_storage_type` to specify one"
+            log.w "\n\nWARN: Failed to resolve enum storage type for '#{marshaler}' marshaller in enum '#{enum.name}', use `marshaler_storage_type` to specify one"
         elsif marshaler_storage_type != enum_storage_type
             machine_sized_marshaler = false
             machine_sized_marshaler = true if marshaler_storage_type  =~ /^Machine(.)Int$/
@@ -4188,13 +4240,13 @@ ARGV[1..-1].each do |yaml_file|
                 # when machine size int marshaler is used for stable int size enume (e.g. NSInteger marshaler for int enum)
                 #
                 if machine_sized_marshaler
-                    $stderr.puts "\n\nWARN: enum '#{enum.name}' marshaler '#{marshaler}' is machine size int while enum storage type '#{enum_storage_type}' is not"
+                    log.w "\n\nWARN: enum '#{enum.name}' marshaler '#{marshaler}' is machine size int while enum storage type '#{enum_storage_type}' is not"
                 else
-                    $stderr.puts "\n\nWARN: enum '#{enum.name}' marshaler '#{marshaler}' is not machine size int while enum storage type '#{enum_storage_type}' is"
+                    log.w "\n\nWARN: enum '#{enum.name}' marshaler '#{marshaler}' is not machine size int while enum storage type '#{enum_storage_type}' is"
                 end
             end
         else
-            $stderr.puts "\n\nWARN: marshaller for '#{enum.name}' is not required as matches existing type '#{enum_storage_type}'"
+            log.w "\n\nWARN: marshaller for '#{enum.name}' is not required as matches existing type '#{enum_storage_type}'"
         end
     end
 
@@ -4288,8 +4340,12 @@ ARGV[1..-1].each do |yaml_file|
             add_potential_new_entry(enum, nil)
 
             # Possibly an enum with values that should be turned into constants
-            potential_constant_enums.push(enum)
-            $stderr.puts "WARN: Turning the enum #{enum.name} with first value #{enum.values[0].name} into constants" unless enum.name == ''
+            if enum.name.empty?
+                # turn only anonymous enums, other will go to potential new entries
+                # TODO: probably we should have a config that allows to turn enum into constants even if it has a name
+                potential_constant_enums.push(enum)
+                log.w "WARN: Turning the enum #{enum.name} with first value #{enum.values[0].name} into constants" unless enum.name == ''
+            end
         end
     end
 
@@ -4554,17 +4610,18 @@ ARGV[1..-1].each do |yaml_file|
         if fconf 
             next if fconf['exclude']
             if f.is_inline? && !$dbg_dump_inline_fn
-                # function expected but it was converted to inline/static and it will not be found during runtime, showing ERR 
-                $stderr.puts ""
-                $stderr.puts "ERROR: Expected function '#{f.name}' now 'inline', probably manual implementation is expected! (location #{Bro.location_to_s(f.location)})"
-                $stderr.puts ""
+                # function expected but it was converted to inline/static and it will not be found during runtime, showing ERR
+# FIXME: temporally disable to not break agent
+#                log.e ""
+#                log.e "ERROR: Expected function '#{f.name}' now 'inline', probably manual implementation is expected! (location #{Bro.location_to_s(f.location)})"
+#                log.e ""
                 next
             end
 
             owner = fconf['class'] || default_class
             functions[owner] = (functions[owner] || []).push([f, fconf])
         elsif f.is_inline?
-            $stderr.puts "WARN: Ignoring 'inline' function '#{f.name}' at #{Bro.location_to_s(f.location)}"
+            log.w "WARN: Ignoring 'inline' function '#{f.name}' at #{Bro.location_to_s(f.location)}"
         end
     end
 
@@ -4960,7 +5017,7 @@ ARGV[1..-1].each do |yaml_file|
             members[owner] = members[owner] || { owner: cat, owner_name: owner, members: [], conf: c }
             members[owner][:members].push([cat.instance_methods + cat.class_methods + cat.properties, c, cat])
         elsif !c || (!c['exclude'] && !c['transitive'])
-            $stderr.puts "WARN: Skipping category #{cat.name} for #{cat.owner}"
+            log.w "WARN: Skipping category #{cat.name} for #{cat.owner}"
         end
     end
 
@@ -5135,7 +5192,7 @@ ARGV[1..-1].each do |yaml_file|
     model.objc_classes.find_all { |cls| !cls.is_opaque? } .each do |cls|
         c = model.get_class_conf(cls.name)
         if !c  && model.is_included?(cls) && cls.is_available? && !cls.is_outdated? && !cls.is_opaque?
-            $stderr.puts "CONV: missing class #{cls.java_name}"
+            log.d "CONV: missing class #{cls.java_name}"
         end
 
         next unless c && !c['exclude'] && !c['transitive'] && cls.is_available? && !cls.is_outdated?
@@ -5196,7 +5253,7 @@ ARGV[1..-1].each do |yaml_file|
     model.objc_protocols.each do |prot|
         c = model.get_protocol_conf(prot.name)
         if !c &&  model.is_included?(prot) && prot.is_available? && !prot.is_outdated? && !prot.is_opaque?
-            $stderr.puts "CONV: missing protocol #{prot.java_name}"
+            log.d "CONV: missing protocol #{prot.java_name}"
         end
         next unless c && !c['exclude'] && !c['transitive'] && !prot.is_outdated?
         name = c['name'] || prot.java_name
@@ -5516,17 +5573,15 @@ ARGV[1..-1].each do |yaml_file|
 
     #
     # dump suggestions for potentially new classes/enum/protocols
+    # add marker to allow agents to capture this section and update yaml file with missing entries
+    log.puts ">>> YAML FILE POTENTIAL NEW ENTRIES <<<"
     if !$potential_new_entries.empty?
-        puts "\n\n\n"
-        puts "\# YAML file potentially missing entries suggestions\n"
-        puts "\n\n\n"
+        log.puts "\n\n\n"
 
         # dumping enums
         potential_enums = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Enum ) || key.is_a?(Bro::EnumValue)  }
         if !potential_enums.empty?
-            puts "#enums:"
-            puts "\# potentially missing enums"
-            puts "#enums:"
+            log.puts "enums:"
             potential_enums.each do |enum, data|
 
                 enum_params = []
@@ -5552,36 +5607,20 @@ ARGV[1..-1].each do |yaml_file|
                 enum_params.push("first: #{enum_members[0]}") if enum.name.empty?
                 enum_params = "{" + enum_params.join(", ") + "}"
                 enum_comments = enum_comments.empty? ? "" : " \#" + enum_comments.join(", ")
-                puts "    #{enum.name.empty? ? 'UNNAMED' : enum.name}: #{enum_params}#{enum_comments}"
+                log.puts "    #{enum.name.empty? ? 'UNNAMED' : enum.name}: #{enum_params}#{enum_comments}"
             end
-            puts "\n\n\n"
+            log.puts "\n\n\n"
         end
 
         # dumping structs
         potential_structs = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Struct) }
         if !potential_structs.empty?
-            puts "\# potentialy missing structs"
+            log.puts "\# potentially missing structs"
             potential_structs.each do |struct, data|
-                puts "    #{struct.name}: {}" + (struct.since  ? " \#since #{struct.since}" : "")
+                log.puts "    #{struct.name}: {}" + (struct.since  ? " \#since #{struct.since}" : "")
             end
-            puts "\n\n\n"
+            log.puts "\n\n\n"
         end
-
-        # duming typedefs as structs        struct = td.struct
-        potential_typedefs = $potential_new_entries.select{ |key, value| key.is_a?(Bro::Typedef) }
-        if !potential_typedefs.empty?
-            puts "\# potentialy missing typedefs"
-            potential_typedefs.each do |td, data|
-                struct = td.struct
-                if struct && struct.is_opaque?
-                    struct = model.structs.find { |e| e.name == td.struct.name } || td.struct
-                end
-                next if !struct || struct.is_opaque?
-                puts "    #{td.name}: {}" + (td.since  ? " \#since #{td.since}" : "")
-            end
-            puts "\n\n\n"
-        end
-
 
         # helper finds if method present in super
         def is_method_in_super(model, cls, full_name)
@@ -5614,7 +5653,7 @@ ARGV[1..-1].each do |yaml_file|
 
         # dumping classes and protocols
         potential_classes_protos = [
-            ["classes", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCClass)}],
+            ["classes", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCClass) || key.is_a?(Bro::Typedef)}],
             ["categories", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCCategory)}],
             ["protocols", $potential_new_entries.select{|key, value| key.is_a?(Bro::ObjCProtocol)}]
         ]
@@ -5622,9 +5661,20 @@ ARGV[1..-1].each do |yaml_file|
             next if entries.empty?
 
             # convert to array and sort to have values to be updated first
-            puts "\# #{title} to be updated:"
-            puts "#{title}:"
+            log.puts "#{title}:"
             entries.each do |cls, data|
+                # handle typedefs first
+                td = cls
+                if td.is_a?(Bro::Typedef)
+                    struct = td.struct
+                    if struct && struct.is_opaque?
+                        struct = model.structs.find { |e| e.name == td.struct.name } || td.struct
+                    end
+                    next if !struct || struct.is_opaque?
+                    log.puts "    #{td.name}: {}" + (td.since  ? " \#since #{td.since}" : "")
+                    next
+                end
+
                 # find all method information
                 bad_methods = data
                 is_new_entry = bad_methods == nil
@@ -5641,7 +5691,7 @@ ARGV[1..-1].each do |yaml_file|
                 # divide bad_methods into two set -- one with methods that has
                 # configuration in parent classes (will be added at bottom)
                 # as these probably not required to be configured. As once
-                # parrent class is configured it configuration will be inherited
+                # parent class is configured it configuration will be inherited
                 if bad_methods && cls.is_a?(Bro::ObjCClass) && cls.superclass
                     bad_methods_new = []
                     bad_methods_inherited = []
@@ -5659,25 +5709,25 @@ ARGV[1..-1].each do |yaml_file|
                 end
 
                 if bad_methods.empty?
-                    puts "    #{cls.java_name}: {}" + (cls.since  ? " \#since #{cls.since}" : "")
+                    log.puts "    #{cls.java_name}: {}" + (cls.since  ? " \#since #{cls.since}" : "")
                     next
                 end
 
-                puts "    #{cls.java_name}:" + (cls.since  ? " \#since #{cls.since}" : "")
-                puts "        methods:"
+                log.puts "    #{cls.java_name}:" + (cls.since  ? " \#since #{cls.since}" : "")
+                log.puts "        methods:"
                 bad_methods_list = [[nil, bad_methods_new]]
                 bad_methods_list.push([" -- methods available in super, don't config if super is configured --", bad_methods_inherited]) unless bad_methods_inherited.empty?
                 bad_methods_list.each do |title, bad_methods|
-                    puts "                \##{title}" if title
+                    log.puts "                \##{title}" if title
                     bad_methods.each do |full_name, name|
-                        puts "            '#{full_name}':"
-                        puts "                \#trim_after_first_colon: true" if (full_name.count(':') > 1)
-                        puts "                name: #{name}"
+                        log.puts "            '#{full_name}':"
+                        log.puts "                name: #{name}"
                     end
                 end
             end
-            puts "\n\n\n"
+            log.puts "\n\n\n"
         end
     end
     # end of dumping suggestions
+    log.puts ">>> END OF YAML FILE POTENTIAL NEW ENTRIES <<<"
 end
