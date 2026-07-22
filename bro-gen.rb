@@ -880,6 +880,8 @@ module Bro
                 '_private'
             when 'static'
                 '_static'
+            when 'package'
+                '_package'
             else
                 @name
             end
@@ -2722,6 +2724,8 @@ module Bro
                     # Find template parameter in objc class
                     if owner && (owner.is_a?(Bro::ObjCClass) || owner.is_a?(Bro::ObjCCategory))
                         e = owner.template_params.find { |e| e.name == name }
+                        e = e || owner.template_params.find { |e| e.name == "KeyType" } if name == "K" # special case for NSDictionary<KeyType, ObjectType>
+                        e = e || owner.template_params.find { |e| e.name == "ObjectType" } if name == "V" # special case for NSDictionary<KeyType, ObjectType>
                     end
                 elsif type.declaration.kind == :cursor_typedef_decl
                     td = @typedefs.find { |e| e.name == name }
@@ -3886,7 +3890,7 @@ LONG_MAX = 0x7fff_ffff_ffff_ffff
 LONG_MIN = (-0x7fff_ffff_ffff_ffff-1)
 
 $mac_version = nil
-$ios_version = '26.1'
+$ios_version = '27.0'
 $ios_version_min_usable = '8.0' # minimal version robovm to be used on, all since notification will be suppressed if ver < 8.0
 $target_platform = 'ios'
 xcode_dir = `xcode-select -p`.chomp
@@ -4644,7 +4648,7 @@ yaml_files.each do |yaml_file|
             annotations = fconf['annotations'] && !fconf['annotations'].empty? ? fconf['annotations'].uniq.join(' ') : nil
             static = 'static '
             use_wrapper = false # mean there is @ByVal, constructor or throw wrapper to be generated 
-            constructor = false # wraping constructor 
+            constructor = false # wrapping constructor
             firstparamtype = if parameters.size >= 1 then (params_conf[parameters[0].name] || {})['type'] || model.resolve_type(nil, parameters[0].type).java_name else nil end
             ret_type = fconf['return_type'] || model.to_java_type(model.resolve_type(nil, f.return_type))
             if fconf['constructor'] == true && ret_type == owner
