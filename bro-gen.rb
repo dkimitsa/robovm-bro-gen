@@ -1393,11 +1393,17 @@ module Bro
             vconf = first.conf
             @java_type = vconf['type'] || @model.to_java_type(@model.resolve_type(self, @type))
             @mutable = vconf['mutable'].nil? ? true : vconf['mutable']
-            @methods = vconf['methods']
+            @methods = vconf['methods'] || {}
             @generate_marshalers = vconf['marshalers'] || true
             @extends = vconf['dictionary_extends'] || vconf['extends'] || (is_foundation? ? 'NSDictionaryWrapper' : 'CFDictionaryWrapper')
             @constructor_visibility = vconf['constructor_visibility']
             @values = [first]
+        end
+
+        def append_value(value)
+            vconf = value.conf
+            @methods = @methods.merge(vconf['methods'] || {})
+            @values.push value
         end
 
         def is_foundation?
@@ -1428,7 +1434,7 @@ module Bro
 
             method_lines = []
             append_basic_methods(method_lines)
-            append_convenience_methods(method_lines) unless @methods.nil?
+            append_convenience_methods(method_lines) unless @methods.empty?
             methods_s = method_lines.flatten.join("\n    ")
             data['methods'] = "\n    #{methods_s}\n    "
 
@@ -3195,7 +3201,7 @@ module Bro
                 if @global_value_dictionaries[v.dictionary].nil?
                     @global_value_dictionaries[v.dictionary] = GlobalValueDictionaryWrapper.new self, v.dictionary, @global_value_enums[v.enum], v
                 else
-                    @global_value_dictionaries[v.dictionary].values.push v
+                    @global_value_dictionaries[v.dictionary].append_value(v)
                 end
             end
             # Filter out global values that belong to an enumeration or dictionary wrapper
