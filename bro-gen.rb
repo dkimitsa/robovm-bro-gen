@@ -871,20 +871,10 @@ module Bro
 
         def name
             # escape names that slashes with Java keyworks
-            case @name
-            when 'native'
-                '_native'
-            when 'public'
-                '_public'
-            when 'private'
-                '_private'
-            when 'static'
-                '_static'
-            when 'package'
-                '_package'
-            else
-                @name
-            end
+            [
+                "native", "public", "private", "static", "package",
+                "int", "long", "short", "byte", "float", "double", "boolean", "char"
+            ].include?(@name) ? "_#{@name}" : @name
         end
     end
 
